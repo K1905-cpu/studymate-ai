@@ -134,19 +134,43 @@ function fallbackNotes(content, reason = "AI formatting issue") {
   };
 }
 
+function extractJson(text) {
+  if (!text) return null;
+  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (jsonMatch && jsonMatch[1]) {
+    cleaned = jsonMatch[1].trim();
+  }
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start !== -1 && end !== -1 && end > start) {
+    cleaned = cleaned.slice(start, end + 1);
+  }
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    try {
+      const sanitized = cleaned.replace(/[\u0000-\u001F\u007F-\u009F]/g, " ");
+      return JSON.parse(sanitized);
+    } catch (e2) {
+      console.error("JSON extraction error:", e2.message);
+      return null;
+    }
+  }
+}
+
 async function generateStudyNotes(content) {
   const prompt = `
-Create study notes from this content.
+Create comprehensive study notes from this content.
 
-Return JSON only.
+Return JSON ONLY. Do NOT include markdown blocks, intro, or extra text.
 
-Use this structure:
-
+Use this JSON structure:
 {
-  "title": "short title",
-  "summary": "summary",
-  "keyPoints": ["point 1", "point 2"],
-  "actionItems": ["action 1"],
+  "title": "short clear title",
+  "summary": "detailed summary of content",
+  "keyPoints": ["point 1", "point 2", "point 3"],
+  "actionItems": ["action 1", "action 2"],
   "flashcards": [
     {
       "question": "question",
@@ -162,52 +186,31 @@ Use this structure:
   ]
 }
 
-Rules:
-- No markdown
-- No code blocks
-- No programming code examples
-- No triple quotes
-- Keep answers simple
-- Escape all quotes properly
-
 Content:
 ${content.slice(0, 15000)}
 `;
 
   try {
     const completion = await groq.chat.completions.create({
-      model: "groq/compound",
+      model: "groq/compound-mini",
       messages: [
         {
           role: "user",
           content: prompt,
         },
       ],
-      temperature: 0,
+      temperature: 0.1,
     });
 
-    let text = completion.choices?.[0]?.message?.content || "";
+    const rawText = completion.choices?.[0]?.message?.content || "";
+    const parsedNotes = extractJson(rawText);
 
-    text = text
-      .replace(/```json/g, "")
-      .replace(/```/g, "")
-      .replace(/\r/g, " ")
-      .replace(/\n/g, " ")
-      .trim();
-
-    const firstBrace = text.indexOf("{");
-    const lastBrace = text.lastIndexOf("}");
-
-    if (firstBrace !== -1 && lastBrace !== -1) {
-      text = text.slice(firstBrace, lastBrace + 1);
+    if (parsedNotes && parsedNotes.summary) {
+      return parsedNotes;
     }
 
-    try {
-      return JSON.parse(text);
-    } catch (jsonError) {
-      console.log("Broken JSON detected. Using fallback.");
-      return fallbackNotes(content, jsonError.message);
-    }
+    console.log("JSON extraction returned incomplete data. Using fallback.");
+    return fallbackNotes(content, "JSON parsing issue");
   } catch (error) {
     console.error("Study notes error:", error.message);
     return fallbackNotes(content, error.message);
@@ -225,14 +228,14 @@ async function translateText(text, language) {
 
     const prompt = `
 Translate this text into ${language}.
-Keep formatting clean and student-friendly.
+Keep formatting clean and student-friendly. Return ONLY the translated text.
 
 Text:
 ${safeText}
 `;
 
     const completion = await groq.chat.completions.create({
-      model: "groq/compound",
+      model: "groq/compound-mini",
       messages: [
         {
           role: "user",
@@ -242,7 +245,9 @@ ${safeText}
       temperature: 0.2,
     });
 
-    return completion.choices?.[0]?.message?.content || "Translation failed.";
+    let raw = completion.choices?.[0]?.message?.content || "Translation failed.";
+    raw = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    return raw;
   } catch (error) {
     console.error("Translation error details:", error);
     return `Translation failed: ${error.message || "Unknown error"}`;
