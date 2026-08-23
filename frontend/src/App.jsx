@@ -55,66 +55,52 @@ function writeString(view, offset, string) {
   }
 }
 
-function encodeCompactWav(audioBuffer, maxSizeBytes = 4.1 * 1024 * 1024) {
+function encodeFastWav(audioBuffer, maxSizeBytes = 4.1 * 1024 * 1024) {
   const targetSampleRate = 8000;
   const numChannels = 1;
-  const bytesPerSample = 1;
 
   let inputData = audioBuffer.getChannelData(0);
   if (audioBuffer.numberOfChannels > 1) {
     const channel2 = audioBuffer.getChannelData(1);
-    const mix = new Float32Array(audioBuffer.length);
-    for (let i = 0; i < audioBuffer.length; i++) {
-      mix[i] = (inputData[i] + channel2[i]) / 2;
+    const len = audioBuffer.length;
+    const mix = new Float32Array(len);
+    for (let i = 0; i < len; i++) {
+      mix[i] = (inputData[i] + channel2[i]) * 0.5;
     }
     inputData = mix;
   }
 
-  const sampleRatio = audioBuffer.sampleRate / targetSampleRate;
-  let newLength = Math.round(audioBuffer.length / sampleRatio);
+  const step = Math.max(1, Math.floor(audioBuffer.sampleRate / targetSampleRate));
+  let newLength = Math.floor(inputData.length / step);
 
-  const maxSamples = Math.floor((maxSizeBytes - 44) / bytesPerSample);
+  const maxSamples = Math.floor(maxSizeBytes - 44);
   if (newLength > maxSamples) {
     newLength = maxSamples;
   }
 
-  const result = new Uint8Array(newLength);
-  let offsetResult = 0;
-  let offsetInput = 0;
-
-  while (offsetResult < result.length) {
-    const nextOffsetInput = Math.round((offsetResult + 1) * sampleRatio);
-    let accum = 0, count = 0;
-    for (let i = offsetInput; i < nextOffsetInput && i < inputData.length; i++) {
-      accum += inputData[i];
-      count++;
-    }
-    const sample = count > 0 ? accum / count : 0;
-    const normalized = Math.max(-1, Math.min(1, sample));
-    result[offsetResult] = Math.floor((normalized + 1) * 127.5);
-    offsetResult++;
-    offsetInput = nextOffsetInput;
-  }
-
-  const wavBuffer = new ArrayBuffer(44 + result.length);
+  const wavBuffer = new ArrayBuffer(44 + newLength);
   const view = new DataView(wavBuffer);
 
   writeString(view, 0, 'RIFF');
-  view.setUint32(4, 36 + result.length, true);
+  view.setUint32(4, 36 + newLength, true);
   writeString(view, 8, 'WAVE');
   writeString(view, 12, 'fmt ');
   view.setUint32(16, 16, true);
   view.setUint16(20, 1, true);
   view.setUint16(22, numChannels, true);
   view.setUint32(24, targetSampleRate, true);
-  view.setUint32(28, targetSampleRate * bytesPerSample, true);
-  view.setUint16(32, bytesPerSample, true);
+  view.setUint32(28, targetSampleRate, true);
+  view.setUint16(32, 1, true);
   view.setUint16(34, 8, true);
   writeString(view, 36, 'data');
-  view.setUint32(40, result.length, true);
+  view.setUint32(40, newLength, true);
 
   const pcmBytes = new Uint8Array(wavBuffer, 44);
-  pcmBytes.set(result);
+  for (let i = 0; i < newLength; i++) {
+    const sample = inputData[i * step];
+    const normalized = sample < -1 ? -1 : (sample > 1 ? 1 : sample);
+    pcmBytes[i] = (normalized + 1) * 127.5 | 0;
+  }
 
   return new Blob([wavBuffer], { type: 'audio/wav' });
 }
@@ -137,16 +123,12 @@ function MainApp() {
 
   const MAX_FILE_SIZE_MB = 4.4;
 
-  function isAudioOrVideoFile(f) {
+  function isVideoFile(f) {
     if (!f) return false;
     const name = f.name.toLowerCase();
     const type = f.type.toLowerCase();
     return (
-      type.startsWith("audio/") ||
       type.startsWith("video/") ||
-      name.endsWith(".mp3") ||
-      name.endsWith(".wav") ||
-      name.endsWith(".m4a") ||
       name.endsWith(".mp4") ||
       name.endsWith(".mov") ||
       name.endsWith(".webm") ||
@@ -164,20 +146,24 @@ function MainApp() {
     setChatMessages([]);
   }
 
-  async function compressMedia(originalFile) {
+  async function compressVideoFile(originalFile) {
+    if (!isVideoFile(originalFile) && originalFile.size <= MAX_FILE_SIZE_MB * 1024 * 1024) {
+      return originalFile;
+    }
+
     try {
       setCompressing(true);
       const arrayBuffer = await originalFile.arrayBuffer();
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
       const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-      const wavBlob = encodeCompactWav(audioBuffer, 4.1 * 1024 * 1024);
+      const wavBlob = encodeFastWav(audioBuffer, 4.1 * 1024 * 1024);
       
       const newName = originalFile.name.replace(/\.[^/.]+$/, "") + "-compressed.wav";
       const compressedFile = new File([wavBlob], newName, { type: "audio/wav" });
       audioContext.close();
       return compressedFile;
     } catch (err) {
-      console.warn("Client side audio extraction failed:", err);
+      console.warn("Fast audio extraction failed, using original file:", err);
       return originalFile;
     } finally {
       setCompressing(false);
@@ -195,14 +181,14 @@ function MainApp() {
       setError("");
 
       let fileToUpload = file;
-      if (isAudioOrVideoFile(file)) {
-        fileToUpload = await compressMedia(file);
+      if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024 || isVideoFile(file)) {
+        fileToUpload = await compressVideoFile(file);
       }
 
       const fileSizeMB = fileToUpload.size / (1024 * 1024);
       if (fileSizeMB > MAX_FILE_SIZE_MB) {
         setError(
-          `File size (${fileSizeMB.toFixed(1)} MB) is too large to process. Please trim or select a shorter audio/video file under 15 minutes.`
+          `File size (${fileSizeMB.toFixed(1)} MB) is too large. Please select a shorter file under 15 minutes.`
         );
         setLoading(false);
         return;
@@ -402,7 +388,7 @@ ${
 
           <button onClick={handleUpload} disabled={loading || compressing}>
             {compressing
-              ? "Extracting & Compressing Audio..."
+              ? "Compressing Audio..."
               : loading
               ? "Generating Notes..."
               : "Generate Study Notes"}

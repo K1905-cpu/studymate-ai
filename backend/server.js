@@ -32,7 +32,7 @@ const GROQ_MODELS = [
   "qwen/qwen3.6-27b"
 ];
 
-async function callGroqCompletion(messages, temperature = 0.1) {
+async function callGroqCompletion(messages, temperature = 0.1, max_tokens = 1500) {
   let lastError = null;
   for (const model of GROQ_MODELS) {
     try {
@@ -40,6 +40,7 @@ async function callGroqCompletion(messages, temperature = 0.1) {
         model,
         messages,
         temperature,
+        max_tokens,
       });
       const content = completion.choices?.[0]?.message?.content;
       if (content) return content;
@@ -259,13 +260,13 @@ Use this JSON structure:
 }
 
 Content:
-${textContent.slice(0, 15000)}
+${textContent.slice(0, 10000)}
 `;
 
   try {
     const rawText = await callGroqCompletion([
       { role: "user", content: prompt }
-    ], 0.1);
+    ], 0.1, 1500);
 
     const parsedNotes = extractJson(rawText);
 
@@ -288,7 +289,7 @@ async function translateText(text, language) {
       return "GROQ_API_KEY is missing in Environment Variables. Please add GROQ_API_KEY under Settings -> Environment Variables.";
     }
 
-    const safeText = typeof text === "string" ? text.slice(0, 8000) : safeString(text).slice(0, 8000);
+    const safeText = typeof text === "string" ? text.slice(0, 6000) : safeString(text).slice(0, 6000);
 
     const prompt = `
 Translate this text into ${language}.
@@ -300,7 +301,7 @@ ${safeText}
 
     let raw = await callGroqCompletion([
       { role: "user", content: prompt }
-    ], 0.2);
+    ], 0.2, 1200);
 
     raw = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
     return safeString(raw);
@@ -426,7 +427,7 @@ app.post("/api/chat", async function (req, res) {
 
     const notesSummary = notes ? safeString(notes.summary) : "";
     const notesTitle = notes ? safeString(notes.title) : "";
-    const contextText = typeof transcript === "string" ? transcript.slice(0, 10000) : safeString(transcript).slice(0, 10000);
+    const contextText = typeof transcript === "string" ? transcript.slice(0, 8000) : safeString(transcript).slice(0, 8000);
 
     const systemPrompt = `You are StudyMate AI Assistant, an expert AI tutor helping a student study their lecture and notes.
 Use the following study materials as your primary knowledge base:
@@ -445,7 +446,7 @@ Instructions:
     ];
 
     if (Array.isArray(chatHistory)) {
-      for (const msg of chatHistory.slice(-6)) {
+      for (const msg of chatHistory.slice(-4)) {
         if (msg.role && msg.content) {
           messages.push({ role: msg.role === "assistant" ? "assistant" : "user", content: safeString(msg.content) });
         }
@@ -454,7 +455,7 @@ Instructions:
 
     messages.push({ role: "user", content: safeString(message) });
 
-    const reply = await callGroqCompletion(messages, 0.3);
+    const reply = await callGroqCompletion(messages, 0.3, 1000);
 
     res.json({
       reply: safeString(reply),
