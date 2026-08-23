@@ -44,7 +44,6 @@ function stripReasoning(raw) {
     answerPart = text.replace(/<think>[\s\S]*/gi, "").trim();
   }
 
-  // If answerPart is too short (e.g. just "B" or empty), but <think> contains the questions!
   if (answerPart.length < 50 && text.includes("<think>")) {
     const thinkContent = text.match(/<think>([\s\S]*?)(?:<\/think>|$)/i)?.[1] || "";
     const qMatch = thinkContent.match(/(?:1[\.\)]|Question 1|\*\*Question 1\*\*|Q1:)[\s\S]*/i);
@@ -70,6 +69,28 @@ function stripReasoning(raw) {
   answerPart = answerPart.replace(/^\*\*Reasoning\*\*[\s\S]*?(?=\n\n|\n[A-Z0-9#\*])/i, "");
 
   return answerPart.trim();
+}
+
+function extractPureTranslation(text) {
+  if (!text) return "";
+  let cleaned = stripReasoning(text);
+
+  if (/Analyze User Input|Deconstruct Input/i.test(cleaned)) {
+    const match = cleaned.match(/(?:SUMMARY|KEY POINTS|ACTION ITEMS|FLASHCARDS|QUIZ|सारांश|मुख्य बिंदु|कार्य|फ्लैशकार्ड|क्विज़|शीर्षक|स्पष्ट)[\s\S]*/i);
+    if (match && match[0].length > 50) {
+      cleaned = match[0];
+    }
+  }
+
+  if (cleaned.includes("Review & Refine")) {
+    const cutoff = cleaned.indexOf("Review & Refine");
+    const lastBlock = cleaned.lastIndexOf("\n\n", cutoff);
+    if (lastBlock !== -1) {
+      cleaned = cleaned.slice(0, lastBlock);
+    }
+  }
+
+  return cleaned.trim();
 }
 
 function cleanReplyText(text, fallback = "Here is your response based on the study materials.") {
@@ -343,19 +364,19 @@ async function translateText(text, language) {
 
     const safeText = typeof text === "string" ? text.slice(0, 6000) : safeString(text).slice(0, 6000);
 
-    const prompt = `
-Translate this text into ${language}.
-Keep formatting clean and student-friendly. Return ONLY the translated text.
+    const systemMsg = {
+      role: "system",
+      content: "You are a professional academic translator. Translate the provided study notes into the requested language. Output ONLY the translated notes. Do NOT include planning steps, deconstructions, analysis, or review sections."
+    };
 
-Text:
-${safeText}
-`;
+    const userMsg = {
+      role: "user",
+      content: `Translate the following study notes directly into ${language}.\n\nRules:\n- Output ONLY the translated text in ${language}.\n- Keep section titles clear (Summary, Key Points, Action Items, Flashcards, Quiz).\n- Do NOT write 'Analyze User Input', 'Deconstruct', or 'Review & Refine'.\n\nText:\n${safeText}`
+    };
 
-    let raw = await callGroqCompletion([
-      { role: "user", content: prompt }
-    ], 0.2, 3000);
+    let raw = await callGroqCompletion([systemMsg, userMsg], 0.1, 3500);
 
-    return cleanReplyText(raw);
+    return extractPureTranslation(raw);
   } catch (error) {
     console.error("Translation error details:", error);
     return `Translation failed: ${error.message || "Unknown error"}`;
