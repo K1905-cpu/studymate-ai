@@ -26,6 +26,32 @@ const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
+const GROQ_MODELS = [
+  "groq/compound-mini",
+  "groq/compound",
+  "llama-3.3-70b-versatile",
+  "llama3-8b-8192"
+];
+
+async function callGroqCompletion(messages, temperature = 0.1) {
+  let lastError = null;
+  for (const model of GROQ_MODELS) {
+    try {
+      const completion = await groq.chat.completions.create({
+        model,
+        messages,
+        temperature,
+      });
+      const content = completion.choices?.[0]?.message?.content;
+      if (content) return content;
+    } catch (err) {
+      console.warn(`Model ${model} failed:`, err.message);
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("All Groq models failed");
+}
+
 app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 
@@ -191,18 +217,10 @@ ${content.slice(0, 15000)}
 `;
 
   try {
-    const completion = await groq.chat.completions.create({
-      model: "groq/compound-mini",
-      messages: [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature: 0.1,
-    });
+    const rawText = await callGroqCompletion([
+      { role: "user", content: prompt }
+    ], 0.1);
 
-    const rawText = completion.choices?.[0]?.message?.content || "";
     const parsedNotes = extractJson(rawText);
 
     if (parsedNotes && parsedNotes.summary) {
@@ -234,18 +252,10 @@ Text:
 ${safeText}
 `;
 
-    const completion = await groq.chat.completions.create({
-      model: "groq/compound-mini",
-      messages: [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature: 0.2,
-    });
+    let raw = await callGroqCompletion([
+      { role: "user", content: prompt }
+    ], 0.2);
 
-    let raw = completion.choices?.[0]?.message?.content || "Translation failed.";
     raw = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
     return raw;
   } catch (error) {
