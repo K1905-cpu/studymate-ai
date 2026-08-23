@@ -55,7 +55,11 @@ function writeString(view, offset, string) {
   }
 }
 
-function encodeMonoWav(audioBuffer, targetSampleRate = 16000) {
+function encodeCompactWav(audioBuffer, maxSizeBytes = 4.1 * 1024 * 1024) {
+  const targetSampleRate = 8000;
+  const numChannels = 1;
+  const bytesPerSample = 1; // 8-bit PCM
+
   let inputData = audioBuffer.getChannelData(0);
   if (audioBuffer.numberOfChannels > 1) {
     const channel2 = audioBuffer.getChannelData(1);
@@ -67,8 +71,14 @@ function encodeMonoWav(audioBuffer, targetSampleRate = 16000) {
   }
 
   const sampleRatio = audioBuffer.sampleRate / targetSampleRate;
-  const newLength = Math.round(audioBuffer.length / sampleRatio);
-  const result = new Float32Array(newLength);
+  let newLength = Math.round(audioBuffer.length / sampleRatio);
+
+  const maxSamples = Math.floor((maxSizeBytes - 44) / bytesPerSample);
+  if (newLength > maxSamples) {
+    newLength = maxSamples;
+  }
+
+  const result = new Uint8Array(newLength);
   let offsetResult = 0;
   let offsetInput = 0;
 
@@ -79,36 +89,34 @@ function encodeMonoWav(audioBuffer, targetSampleRate = 16000) {
       accum += inputData[i];
       count++;
     }
-    result[offsetResult] = count > 0 ? accum / count : 0;
+    const sample = count > 0 ? accum / count : 0;
+    const normalized = Math.max(-1, Math.min(1, sample));
+    result[offsetResult] = Math.floor((normalized + 1) * 127.5);
     offsetResult++;
     offsetInput = nextOffsetInput;
   }
 
-  const wavBuffer = new ArrayBuffer(44 + result.length * 2);
+  const wavBuffer = new ArrayBuffer(44 + result.length);
   const view = new DataView(wavBuffer);
 
   writeString(view, 0, 'RIFF');
-  view.setUint32(4, 36 + result.length * 2, true);
+  view.setUint32(4, 36 + result.length, true);
   writeString(view, 8, 'WAVE');
   writeString(view, 12, 'fmt ');
   view.setUint32(16, 16, true);
   view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
+  view.setUint16(22, numChannels, true);
   view.setUint32(24, targetSampleRate, true);
-  view.setUint32(28, targetSampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
+  view.setUint32(28, targetSampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 8, true);
   writeString(view, 36, 'data');
-  view.setUint32(40, result.length * 2, true);
+  view.setUint32(40, result.length, true);
 
-  let offset = 44;
-  for (let i = 0; i < result.length; i++) {
-    const s = Math.max(-1, Math.min(1, result[i]));
-    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-    offset += 2;
-  }
+  const pcmBytes = new Uint8Array(wavBuffer, 44);
+  pcmBytes.set(result);
 
-  return new Blob([view], { type: 'audio/wav' });
+  return new Blob([wavBuffer], { type: 'audio/wav' });
 }
 
 function MainApp() {
@@ -122,7 +130,7 @@ function MainApp() {
   const [translatedText, setTranslatedText] = useState("");
   const [translating, setTranslating] = useState(false);
 
-  const MAX_FILE_SIZE_MB = 4.5;
+  const MAX_FILE_SIZE_MB = 4.4;
 
   function isAudioOrVideoFile(f) {
     if (!f) return false;
@@ -150,16 +158,13 @@ function MainApp() {
     setTranslatedText("");
   }
 
-  async function compressMediaIfNeeded(originalFile) {
-    if (!isAudioOrVideoFile(originalFile)) return originalFile;
-    if (originalFile.size <= MAX_FILE_SIZE_MB * 1024 * 1024) return originalFile;
-
+  async function compressMedia(originalFile) {
     try {
       setCompressing(true);
       const arrayBuffer = await originalFile.arrayBuffer();
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
       const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-      const wavBlob = encodeMonoWav(audioBuffer, 16000);
+      const wavBlob = encodeCompactWav(audioBuffer, 4.1 * 1024 * 1024);
       
       const newName = originalFile.name.replace(/\.[^/.]+$/, "") + "-compressed.wav";
       const compressedFile = new File([wavBlob], newName, { type: "audio/wav" });
@@ -184,14 +189,14 @@ function MainApp() {
       setError("");
 
       let fileToUpload = file;
-      if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024 && isAudioOrVideoFile(file)) {
-        fileToUpload = await compressMediaIfNeeded(file);
+      if (isAudioOrVideoFile(file)) {
+        fileToUpload = await compressMedia(file);
       }
 
       const fileSizeMB = fileToUpload.size / (1024 * 1024);
       if (fileSizeMB > MAX_FILE_SIZE_MB) {
         setError(
-          `File size (${fileSizeMB.toFixed(1)} MB) exceeds Vercel's 4.5 MB serverless limit. Please trim or select an audio/video/PDF file under 4.5 MB.`
+          `File size (${fileSizeMB.toFixed(1)} MB) exceeds Vercel's 4.5 MB serverless limit. Please trim or select a file under 4.5 MB.`
         );
         setLoading(false);
         return;
@@ -339,7 +344,7 @@ ${
       <main className="container">
         <section className="card upload-card">
           <h2>Upload Lecture File</h2>
-          <p className="muted">Supported: audio, video, PDF, TXT (Vercel max payload: 4.5 MB)</p>
+          <p className="muted">Supported: audio, video, PDF, TXT (Auto-compresses video/audio for Vercel)</p>
 
           <input type="file" onChange={handleFileChange} />
 
