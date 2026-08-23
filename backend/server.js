@@ -340,14 +340,12 @@ app.post("/api/translate", async function (req, res) {
   }
 });
 
-if (!process.env.VERCEL) {
-  const server = app.listen(PORT, "0.0.0.0", function () {
-    console.log(`StudyMate AI backend running on port ${PORT}`);
-  });
+const server = app.listen(PORT, "0.0.0.0", function () {
+  console.log(`StudyMate AI backend running on port ${PORT}`);
+});
 
-  server.on("error", function (error) {
-    console.error("Server error:", error);
-  });
-}
+server.on("error", function (error) {
+  console.error("Server error:", error);
+});
 
 export default app;
