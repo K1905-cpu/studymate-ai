@@ -450,6 +450,7 @@ CRITICAL FORMATTING INSTRUCTIONS:
 - Format responses beautifully using clean Markdown:
   * Use bold text (**term**) for key terms and concepts.
   * Use bullet lists (- item) for lists, flashcards, or key points.
+  * Use Markdown Tables (| Col 1 | Col 2 |) for term/definition comparisons.
   * Use clear headings (### Heading) to structure sections.
 - Keep responses concise, clear, well-aligned, and student-friendly.`;
 
@@ -458,11 +459,26 @@ CRITICAL FORMATTING INSTRUCTIONS:
     ];
 
     if (Array.isArray(chatHistory)) {
-      for (const msg of chatHistory.slice(-4)) {
-        if (msg.role && msg.content) {
-          messages.push({ role: msg.role === "assistant" ? "assistant" : "user", content: safeString(msg.content) });
+      const validHistory = chatHistory.filter(
+        (m) => m && m.role && m.content && typeof m.content === "string" && m.content.trim().length > 0
+      );
+
+      // Keep only up to 6 previous history turns
+      const recent = validHistory.slice(-6);
+
+      let lastRole = "system";
+      for (const msg of recent) {
+        const role = msg.role === "assistant" ? "assistant" : "user";
+        if (role !== lastRole) {
+          messages.push({ role, content: safeString(msg.content) });
+          lastRole = role;
         }
       }
+    }
+
+    // Ensure the final message appended is the current user message and role alternates cleanly
+    if (messages.length > 0 && messages[messages.length - 1].role === "user") {
+      messages.pop();
     }
 
     messages.push({ role: "user", content: safeString(message) });

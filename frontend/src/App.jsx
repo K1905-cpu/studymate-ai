@@ -63,7 +63,6 @@ function FormattedText({ content }) {
       const tableLines = [];
       while (i < lines.length && lines[i].trim().startsWith("|")) {
         const rowStr = lines[i].trim();
-        // Ignore table separator row |---|---|
         const isSeparator = /^\|[\s:\-]+\|$/i.test(rowStr) || /^\|(?:\s*:?-+:?\s*\|)+$/i.test(rowStr);
         if (!isSeparator) {
           tableLines.push(rowStr);
@@ -390,7 +389,9 @@ function MainApp() {
     if (!textToSend || !textToSend.trim() || chatLoading) return;
 
     const userMsg = { role: "user", content: textToSend.trim() };
+    const historyBeforeNewMsg = chatMessages;
     const updatedHistory = [...chatMessages, userMsg];
+
     setChatMessages(updatedHistory);
     if (!customMessage) setChatInput("");
     setChatLoading(true);
@@ -400,7 +401,7 @@ function MainApp() {
         message: textToSend,
         transcript,
         notes,
-        chatHistory: updatedHistory,
+        chatHistory: historyBeforeNewMsg,
       });
 
       const assistantMsg = {
