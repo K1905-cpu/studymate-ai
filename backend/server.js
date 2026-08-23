@@ -216,12 +216,19 @@ ${content.slice(0, 15000)}
 
 async function translateText(text, language) {
   try {
+    if (!process.env.GROQ_API_KEY) {
+      console.error("GROQ_API_KEY is missing in environment variables.");
+      return "GROQ_API_KEY is missing in Vercel Environment Variables. Please add GROQ_API_KEY in Vercel Settings -> Environment Variables.";
+    }
+
+    const safeText = text ? text.slice(0, 8000) : "";
+
     const prompt = `
 Translate this text into ${language}.
 Keep formatting clean and student-friendly.
 
 Text:
-${text}
+${safeText}
 `;
 
     const completion = await groq.chat.completions.create({
@@ -237,8 +244,8 @@ ${text}
 
     return completion.choices?.[0]?.message?.content || "Translation failed.";
   } catch (error) {
-    console.error("Translation fallback used:", error.message);
-    return "Translation failed. Please try again.";
+    console.error("Translation error details:", error);
+    return `Translation failed: ${error.message || "Unknown error"}`;
   }
 }
 

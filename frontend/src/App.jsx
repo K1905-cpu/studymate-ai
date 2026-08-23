@@ -105,7 +105,7 @@ ${
 
       setTranslatedText(response.data.translatedText);
     } catch (err) {
-      setError("Translation failed.");
+      setError(err.response?.data?.error || err.message || "Translation failed.");
     } finally {
       setTranslating(false);
     }
