@@ -90,11 +90,11 @@ function isAudioOrVideo(mimetype, filename = "") {
 
 function checkFileSize(mimetype, filename, fileSizeMB) {
   if (isAudioOrVideo(mimetype, filename) && fileSizeMB > LIMITS_MB.audioVideo) {
-    return `Audio/video file is too large (${fileSizeMB.toFixed(1)} MB). Vercel serverless limit is 4.5 MB. Please select a file under 4.5 MB.`;
+    return `Audio/video file is too large (${fileSizeMB.toFixed(1)} MB). Limit is 4.5 MB per file.`;
   }
 
   if (isPdf(mimetype, filename) && fileSizeMB > LIMITS_MB.pdf) {
-    return `PDF file is too large (${fileSizeMB.toFixed(1)} MB). Vercel serverless limit is 4.5 MB. Please select a file under 4.5 MB.`;
+    return `PDF file is too large (${fileSizeMB.toFixed(1)} MB). Limit is 4.5 MB per file.`;
   }
 
   if (isText(mimetype, filename) && fileSizeMB > LIMITS_MB.txt) {
@@ -285,7 +285,7 @@ async function translateText(text, language) {
   try {
     if (!process.env.GROQ_API_KEY) {
       console.error("GROQ_API_KEY is missing in environment variables.");
-      return "GROQ_API_KEY is missing in Vercel Environment Variables. Please add GROQ_API_KEY in Vercel Settings -> Environment Variables.";
+      return "GROQ_API_KEY is missing in Environment Variables. Please add GROQ_API_KEY under Settings -> Environment Variables.";
     }
 
     const safeText = typeof text === "string" ? text.slice(0, 8000) : safeString(text).slice(0, 8000);
@@ -378,7 +378,7 @@ app.post("/api/process-file", upload.single("file"), async function (req, res) {
     if (error.code === "LIMIT_FILE_SIZE") {
       return res.status(400).json({
         error:
-          "File size exceeds the 4.5 MB Vercel upload limit. Please select a smaller file under 4.5 MB.",
+          "File size exceeds the 4.5 MB upload limit. Please select a smaller file under 4.5 MB.",
       });
     }
 
@@ -414,10 +414,63 @@ app.post("/api/translate", async function (req, res) {
   }
 });
 
+app.post("/api/chat", async function (req, res) {
+  try {
+    const { message, transcript, notes, chatHistory } = req.body;
+
+    if (!message || !safeString(message).trim()) {
+      return res.status(400).json({
+        error: "Message is required.",
+      });
+    }
+
+    const notesSummary = notes ? safeString(notes.summary) : "";
+    const notesTitle = notes ? safeString(notes.title) : "";
+    const contextText = typeof transcript === "string" ? transcript.slice(0, 10000) : safeString(transcript).slice(0, 10000);
+
+    const systemPrompt = `You are StudyMate AI Assistant, an expert AI tutor helping a student study their lecture and notes.
+Use the following study materials as your primary knowledge base:
+Document Title: ${notesTitle || "Uploaded Study Material"}
+Summary: ${notesSummary}
+Full Content / Transcript:
+${contextText}
+
+Instructions:
+- Answer student questions accurately based on the context.
+- If asked for more flashcards, quiz questions, key points, or action items, format them cleanly with clear headers, Q&A, or bullet points.
+- Keep responses concise, clear, and student-friendly.`;
+
+    const messages = [
+      { role: "system", content: systemPrompt }
+    ];
+
+    if (Array.isArray(chatHistory)) {
+      for (const msg of chatHistory.slice(-6)) {
+        if (msg.role && msg.content) {
+          messages.push({ role: msg.role === "assistant" ? "assistant" : "user", content: safeString(msg.content) });
+        }
+      }
+    }
+
+    messages.push({ role: "user", content: safeString(message) });
+
+    const reply = await callGroqCompletion(messages, 0.3);
+
+    res.json({
+      reply: safeString(reply),
+    });
+  } catch (error) {
+    console.error("Chat API error:", error);
+    res.status(500).json({
+      error: "Failed to generate chatbot response. Please try again.",
+    });
+  }
+});
+
 app.use(function (err, req, res, next) {
   if (err && (err.type === "entity.too.large" || err.status === 413 || err.code === "LIMIT_FILE_SIZE")) {
     return res.status(400).json({
-      error: "File size exceeds the 4.5 MB Vercel upload limit. Please select a smaller audio or PDF file under 4.5 MB.",
+      error: "File size exceeds the 4.5 MB upload limit. Please select a smaller audio or PDF file under 4.5 MB.",
     });
   }
   if (err) {

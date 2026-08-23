@@ -58,7 +58,7 @@ function writeString(view, offset, string) {
 function encodeCompactWav(audioBuffer, maxSizeBytes = 4.1 * 1024 * 1024) {
   const targetSampleRate = 8000;
   const numChannels = 1;
-  const bytesPerSample = 1; // 8-bit PCM
+  const bytesPerSample = 1;
 
   let inputData = audioBuffer.getChannelData(0);
   if (audioBuffer.numberOfChannels > 1) {
@@ -130,6 +130,11 @@ function MainApp() {
   const [translatedText, setTranslatedText] = useState("");
   const [translating, setTranslating] = useState(false);
 
+  // Chatbot State
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+
   const MAX_FILE_SIZE_MB = 4.4;
 
   function isAudioOrVideoFile(f) {
@@ -156,6 +161,7 @@ function MainApp() {
     setNotes(null);
     setTranscript("");
     setTranslatedText("");
+    setChatMessages([]);
   }
 
   async function compressMedia(originalFile) {
@@ -196,7 +202,7 @@ function MainApp() {
       const fileSizeMB = fileToUpload.size / (1024 * 1024);
       if (fileSizeMB > MAX_FILE_SIZE_MB) {
         setError(
-          `File size (${fileSizeMB.toFixed(1)} MB) exceeds Vercel's 4.5 MB serverless limit. Please trim or select a file under 4.5 MB.`
+          `File size (${fileSizeMB.toFixed(1)} MB) is too large to process. Please trim or select a shorter audio/video file under 15 minutes.`
         );
         setLoading(false);
         return;
@@ -217,10 +223,50 @@ function MainApp() {
 
       setNotes(response.data.notes);
       setTranscript(renderSafe(response.data.transcript));
+      setChatMessages([
+        {
+          role: "assistant",
+          content: "Hi! I am your StudyMate AI Tutor. Ask me any question about your lecture notes, or click a suggestion chip below to generate more flashcards, quizzes, or key points!",
+        },
+      ]);
     } catch (err) {
       setError(renderSafe(err.response?.data?.error || err.message || "Something went wrong."));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleSendChat(customMessage) {
+    const textToSend = customMessage || chatInput;
+    if (!textToSend || !textToSend.trim() || chatLoading) return;
+
+    const userMsg = { role: "user", content: textToSend.trim() };
+    const updatedHistory = [...chatMessages, userMsg];
+    setChatMessages(updatedHistory);
+    if (!customMessage) setChatInput("");
+    setChatLoading(true);
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/chat`, {
+        message: textToSend,
+        transcript,
+        notes,
+        chatHistory: updatedHistory,
+      });
+
+      const assistantMsg = {
+        role: "assistant",
+        content: renderSafe(response.data.reply),
+      };
+      setChatMessages([...updatedHistory, assistantMsg]);
+    } catch (err) {
+      const errorMsg = {
+        role: "assistant",
+        content: renderSafe(err.response?.data?.error || "Failed to get chatbot response. Please try again."),
+      };
+      setChatMessages([...updatedHistory, errorMsg]);
+    } finally {
+      setChatLoading(false);
     }
   }
 
@@ -336,7 +382,7 @@ ${
           <h1>StudyMate AI</h1>
           <p>
             Upload lecture audio, video, PDF, or text and get instant summaries,
-            key points, flashcards, quizzes, and translated notes.
+            key points, flashcards, quizzes, interactive AI chat, and translated notes.
           </p>
         </div>
       </header>
@@ -344,7 +390,7 @@ ${
       <main className="container">
         <section className="card upload-card">
           <h2>Upload Lecture File</h2>
-          <p className="muted">Supported: audio, video, PDF, TXT (Auto-compresses video/audio for Vercel)</p>
+          <p className="muted">Supported: audio, video, PDF, TXT (Auto-compresses large files)</p>
 
           <input type="file" onChange={handleFileChange} />
 
@@ -432,6 +478,89 @@ ${
                     </p>
                   </div>
                 ))}
+            </div>
+
+            {/* AI Study Chatbot Component */}
+            <div className="card chatbot-card">
+              <div className="chatbot-header">
+                <h3>💬 StudyMate AI Chatbot</h3>
+                <span className="chat-badge">Live Tutor</span>
+              </div>
+              <p className="muted" style={{ marginBottom: 12 }}>
+                Ask questions about this lecture or click a chip below to generate more study materials!
+              </p>
+
+              <div className="chip-container">
+                <button
+                  type="button"
+                  className="chip-btn"
+                  onClick={() => handleSendChat("Generate 3 more Flashcards")}
+                  disabled={chatLoading}
+                >
+                  💡 Generate 3 more Flashcards
+                </button>
+                <button
+                  type="button"
+                  className="chip-btn"
+                  onClick={() => handleSendChat("Create 5 extra Quiz Questions with answer options")}
+                  disabled={chatLoading}
+                >
+                  ❓ Create 5 extra Quiz Questions
+                </button>
+                <button
+                  type="button"
+                  className="chip-btn"
+                  onClick={() => handleSendChat("Summarize key formulas, definitions, and core concepts")}
+                  disabled={chatLoading}
+                >
+                  📌 Key Formulas & Definitions
+                </button>
+                <button
+                  type="button"
+                  className="chip-btn"
+                  onClick={() => handleSendChat("Explain the main topic in simple terms for beginners")}
+                  disabled={chatLoading}
+                >
+                  📝 Explain Simply
+                </button>
+              </div>
+
+              <div className="chat-history">
+                {chatMessages.map((msg, index) => (
+                  <div key={index} className={`chat-message ${msg.role}`}>
+                    <div className="message-sender">
+                      {msg.role === "user" ? "You" : "StudyMate AI"}
+                    </div>
+                    <div className="message-bubble">{renderSafe(msg.content)}</div>
+                  </div>
+                ))}
+                {chatLoading && (
+                  <div className="chat-message assistant">
+                    <div className="message-sender">StudyMate AI</div>
+                    <div className="message-bubble">Thinking... 🧠✨</div>
+                  </div>
+                )}
+              </div>
+
+              <form
+                className="chat-input-row"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSendChat();
+                }}
+              >
+                <input
+                  type="text"
+                  className="chat-input"
+                  placeholder="Ask a question or request more study notes..."
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  disabled={chatLoading}
+                />
+                <button type="submit" disabled={chatLoading || !chatInput.trim()}>
+                  {chatLoading ? "Sending..." : "Send"}
+                </button>
+              </form>
             </div>
 
             <div className="card actions">
