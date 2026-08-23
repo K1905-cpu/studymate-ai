@@ -32,6 +32,14 @@ const GROQ_MODELS = [
   "qwen/qwen3.6-27b"
 ];
 
+function stripReasoning(text) {
+  if (!text) return "";
+  let cleaned = typeof text === "string" ? text : safeString(text);
+  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  cleaned = cleaned.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "");
+  return cleaned.trim();
+}
+
 async function callGroqCompletion(messages, temperature = 0.1, max_tokens = 1500) {
   let lastError = null;
   for (const model of GROQ_MODELS) {
@@ -43,7 +51,7 @@ async function callGroqCompletion(messages, temperature = 0.1, max_tokens = 1500
         max_tokens,
       });
       const content = completion.choices?.[0]?.message?.content;
-      if (content) return content;
+      if (content) return stripReasoning(content);
     } catch (err) {
       console.warn(`Model ${model} failed:`, err.message);
       lastError = err;
@@ -207,7 +215,7 @@ function fallbackNotes(content, reason = "AI formatting issue") {
 
 function extractJson(text) {
   if (!text) return null;
-  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  let cleaned = stripReasoning(text);
   const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   if (jsonMatch && jsonMatch[1]) {
     cleaned = jsonMatch[1].trim();
@@ -303,8 +311,7 @@ ${safeText}
       { role: "user", content: prompt }
     ], 0.2, 1200);
 
-    raw = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-    return safeString(raw);
+    return stripReasoning(raw);
   } catch (error) {
     console.error("Translation error details:", error);
     return `Translation failed: ${error.message || "Unknown error"}`;
@@ -438,6 +445,7 @@ ${contextText}
 
 Instructions:
 - Answer student questions accurately based on the context.
+- Output ONLY the direct answer. Never include <think> tags, internal reasoning, or XML tags.
 - If asked for more flashcards, quiz questions, key points, or action items, format them cleanly with clear headers, Q&A, or bullet points.
 - Keep responses concise, clear, and student-friendly.`;
 
@@ -456,9 +464,10 @@ Instructions:
     messages.push({ role: "user", content: safeString(message) });
 
     const reply = await callGroqCompletion(messages, 0.3, 1000);
+    const cleanReply = stripReasoning(reply);
 
     res.json({
-      reply: safeString(reply),
+      reply: safeString(cleanReply),
     });
   } catch (error) {
     console.error("Chat API error:", error);

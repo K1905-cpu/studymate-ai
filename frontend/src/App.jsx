@@ -16,6 +16,14 @@ function renderSafe(val) {
   return String(val);
 }
 
+function cleanChatText(val) {
+  const safe = renderSafe(val);
+  return safe
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "")
+    .trim();
+}
+
 class ErrorBoundary extends Component {
   constructor(props) {
     super(props);
@@ -138,6 +146,11 @@ function MainApp() {
 
   function handleFileChange(e) {
     const selectedFile = e.target.files[0];
+    if (!selectedFile) return;
+
+    // Reset current processing and replace active file state cleanly
+    setLoading(false);
+    setCompressing(false);
     setFile(selectedFile);
     setError("");
     setNotes(null);
@@ -242,13 +255,13 @@ function MainApp() {
 
       const assistantMsg = {
         role: "assistant",
-        content: renderSafe(response.data.reply),
+        content: cleanChatText(response.data.reply),
       };
       setChatMessages([...updatedHistory, assistantMsg]);
     } catch (err) {
       const errorMsg = {
         role: "assistant",
-        content: renderSafe(err.response?.data?.error || "Failed to get chatbot response. Please try again."),
+        content: cleanChatText(err.response?.data?.error || "Failed to get chatbot response. Please try again."),
       };
       setChatMessages([...updatedHistory, errorMsg]);
     } finally {
@@ -308,7 +321,7 @@ ${
         language,
       });
 
-      setTranslatedText(renderSafe(response.data.translatedText));
+      setTranslatedText(cleanChatText(response.data.translatedText));
     } catch (err) {
       setError(renderSafe(err.response?.data?.error || err.message || "Translation failed."));
     } finally {
@@ -517,7 +530,7 @@ ${
                     <div className="message-sender">
                       {msg.role === "user" ? "You" : "StudyMate AI"}
                     </div>
-                    <div className="message-bubble">{renderSafe(msg.content)}</div>
+                    <div className="message-bubble">{cleanChatText(msg.content)}</div>
                   </div>
                 ))}
                 {chatLoading && (
