@@ -75,20 +75,25 @@ function extractPureTranslation(text) {
   if (!text) return "";
   let cleaned = stripReasoning(text);
 
-  if (/Analyze User Input|Deconstruct Input/i.test(cleaned)) {
-    const match = cleaned.match(/(?:SUMMARY|KEY POINTS|ACTION ITEMS|FLASHCARDS|QUIZ|सारांश|मुख्य बिंदु|कार्य|फ्लैशकार्ड|क्विज़|शीर्षक|स्पष्ट)[\s\S]*/i);
-    if (match && match[0].length > 50) {
-      cleaned = match[0];
+  if (/Analyze User Input|Deconstruct Input|Plan Translation/i.test(cleaned)) {
+    if (/Review & Refine|Self-Correction/i.test(cleaned)) {
+      const revIdx = cleaned.search(/(?:3\.\s+\*\*Review|\*\*Review & Refine\*\*)/i);
+      if (revIdx !== -1) {
+        cleaned = cleaned.slice(0, revIdx).trim();
+      }
+    }
+
+    const deconstIdx = cleaned.search(/2\.\s+\*\*Deconstruct/i);
+    if (deconstIdx !== -1) {
+      const contentAfterDeconstruct = cleaned.slice(deconstIdx);
+      const firstContentMatch = contentAfterDeconstruct.match(/(?:\*Title:\*|\*Translation:\*|SUMMARY|सारांश|Resumen|Résumé|સંક્ષિપ્તમાં|சுருக்கம்|సారాంశం|\*\*SUMMARY\*\*)[\s\S]*/i);
+      if (firstContentMatch && firstContentMatch[0].length > 40) {
+        cleaned = firstContentMatch[0];
+      }
     }
   }
 
-  if (cleaned.includes("Review & Refine")) {
-    const cutoff = cleaned.indexOf("Review & Refine");
-    const lastBlock = cleaned.lastIndexOf("\n\n", cutoff);
-    if (lastBlock !== -1) {
-      cleaned = cleaned.slice(0, lastBlock);
-    }
-  }
+  cleaned = cleaned.replace(/^\*(?:Hindi|Gujarati|Spanish|French|Marathi|Bengali|Tamil|Telugu|German|Japanese|Chinese|Translation):\*\s*/i, "");
 
   return cleaned.trim();
 }
@@ -366,15 +371,15 @@ async function translateText(text, language) {
 
     const systemMsg = {
       role: "system",
-      content: "You are a professional academic translator. Translate the provided study notes into the requested language. Output ONLY the translated notes. Do NOT include planning steps, deconstructions, analysis, or review sections."
+      content: `You are a direct document translator into ${language}. Output ONLY the translated document in ${language}. Do NOT write analysis, deconstruction, planning, or self-review steps.`
     };
 
     const userMsg = {
       role: "user",
-      content: `Translate the following study notes directly into ${language}.\n\nRules:\n- Output ONLY the translated text in ${language}.\n- Keep section titles clear (Summary, Key Points, Action Items, Flashcards, Quiz).\n- Do NOT write 'Analyze User Input', 'Deconstruct', or 'Review & Refine'.\n\nText:\n${safeText}`
+      content: `Translate the following study notes directly into ${language}.\n\nSTRICT RULES:\n- Do NOT write 'Analyze User Input', 'Deconstruct Input', or 'Review & Refine'.\n- Output ONLY the final translated study notes in ${language}.\n\nNotes to translate:\n${safeText}`
     };
 
-    let raw = await callGroqCompletion([systemMsg, userMsg], 0.1, 3500);
+    let raw = await callGroqCompletion([systemMsg, userMsg], 0.0, 3500);
 
     return extractPureTranslation(raw);
   } catch (error) {
