@@ -35,8 +35,14 @@ const GROQ_MODELS = [
 function stripReasoning(text) {
   if (!text) return "";
   let cleaned = typeof text === "string" ? text : safeString(text);
+  // 1. Remove closed <think>...</think> blocks
   cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  // 2. Remove unclosed <think>... to end
+  cleaned = cleaned.replace(/<think>[\s\S]*/gi, "");
+  // 3. Remove closed <reasoning>...</reasoning> blocks
   cleaned = cleaned.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "");
+  // 4. Remove unclosed <reasoning>... to end
+  cleaned = cleaned.replace(/<reasoning>[\s\S]*/gi, "");
   return cleaned.trim();
 }
 
@@ -443,10 +449,10 @@ Summary: ${notesSummary}
 Full Content / Transcript:
 ${contextText}
 
-Instructions:
+CRITICAL INSTRUCTIONS:
+- Do NOT output <think> or <reasoning> tags. Return ONLY your direct tutor response.
 - Answer student questions accurately based on the context.
-- Output ONLY the direct answer. Never include <think> tags, internal reasoning, or XML tags.
-- If asked for more flashcards, quiz questions, key points, or action items, format them cleanly with clear headers, Q&A, or bullet points.
+- If asked for more flashcards, quiz questions, key points, or action items, format them cleanly.
 - Keep responses concise, clear, and student-friendly.`;
 
     const messages = [

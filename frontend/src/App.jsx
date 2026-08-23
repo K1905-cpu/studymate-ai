@@ -18,10 +18,13 @@ function renderSafe(val) {
 
 function cleanChatText(val) {
   const safe = renderSafe(val);
-  return safe
+  let cleaned = safe
     .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<think>[\s\S]*/gi, "")
     .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "")
+    .replace(/<reasoning>[\s\S]*/gi, "")
     .trim();
+  return cleaned;
 }
 
 class ErrorBoundary extends Component {
@@ -130,6 +133,7 @@ function MainApp() {
   const [chatLoading, setChatLoading] = useState(false);
 
   const MAX_FILE_SIZE_MB = 4.4;
+  const ALLOWED_EXT = [".pdf", ".txt", ".mp3", ".wav", ".m4a", ".mp4", ".mov", ".webm", ".mkv"];
 
   function isVideoFile(f) {
     if (!f) return false;
@@ -148,7 +152,18 @@ function MainApp() {
     const selectedFile = e.target.files[0];
     if (!selectedFile) return;
 
-    // Reset current processing and replace active file state cleanly
+    const ext = "." + selectedFile.name.split(".").pop().toLowerCase();
+    if (!ALLOWED_EXT.includes(ext)) {
+      setError(`Unsupported file type (${ext}). Please select an Audio file (.mp3, .wav, .m4a), Video file (.mp4, .mov, .webm), PDF (.pdf), or Text (.txt) file.`);
+      setFile(null);
+      setNotes(null);
+      setTranscript("");
+      setTranslatedText("");
+      setChatMessages([]);
+      return;
+    }
+
+    // Reset current state cleanly and replace active file
     setLoading(false);
     setCompressing(false);
     setFile(selectedFile);
@@ -185,7 +200,13 @@ function MainApp() {
 
   async function handleUpload() {
     if (!file) {
-      setError("Please select a file first.");
+      setError("Please select a valid file first.");
+      return;
+    }
+
+    const ext = "." + file.name.split(".").pop().toLowerCase();
+    if (!ALLOWED_EXT.includes(ext)) {
+      setError(`Unsupported file type (${ext}). Please upload an Audio (.mp3, .wav, .m4a), Video (.mp4, .mov, .webm), PDF (.pdf), or Text (.txt) file.`);
       return;
     }
 
@@ -201,7 +222,7 @@ function MainApp() {
       const fileSizeMB = fileToUpload.size / (1024 * 1024);
       if (fileSizeMB > MAX_FILE_SIZE_MB) {
         setError(
-          `File size (${fileSizeMB.toFixed(1)} MB) is too large. Please select a shorter file under 15 minutes.`
+          `File size (${fileSizeMB.toFixed(1)} MB) is too large. Please select a shorter clip under 15 minutes.`
         );
         setLoading(false);
         return;
@@ -391,7 +412,11 @@ ${
           <h2>Upload Lecture File</h2>
           <p className="muted">Supported: audio, video, PDF, TXT (Auto-compresses large files)</p>
 
-          <input type="file" onChange={handleFileChange} />
+          <input
+            type="file"
+            onChange={handleFileChange}
+            disabled={loading || compressing}
+          />
 
           {file && (
             <p className="file-name">
@@ -399,11 +424,11 @@ ${
             </p>
           )}
 
-          <button onClick={handleUpload} disabled={loading || compressing}>
+          <button onClick={handleUpload} disabled={loading || compressing || !file}>
             {compressing
-              ? "Compressing Audio..."
+              ? "Compressing Audio... 🎵"
               : loading
-              ? "Generating Notes..."
+              ? "Generating Notes... 🧠"
               : "Generate Study Notes"}
           </button>
 
