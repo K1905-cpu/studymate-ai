@@ -27,16 +27,22 @@ const groq = new Groq({
 });
 
 const GROQ_MODELS = [
+  "qwen/qwen3.6-27b",
   "groq/compound-mini",
-  "groq/compound",
-  "qwen/qwen3.6-27b"
+  "groq/compound"
 ];
 
 function stripReasoning(text) {
   if (!text) return "";
   let cleaned = typeof text === "string" ? text : safeString(text);
 
-  // 1. If response has **Reasoning** and **Answer**, extract answer directly
+  if (cleaned.includes("</think>")) {
+    const thinkEnd = cleaned.indexOf("</think>");
+    cleaned = cleaned.slice(thinkEnd + 8);
+  } else {
+    cleaned = cleaned.replace(/<think>[\s\S]*/gi, "");
+  }
+
   if (cleaned.includes("**Answer")) {
     const parts = cleaned.split(/\*\*Answer.*?\*\*/i);
     if (parts.length > 1 && parts[parts.length - 1].trim().length > 5) {
@@ -44,15 +50,8 @@ function stripReasoning(text) {
     }
   }
 
-  // 2. Remove closed <think>...</think> blocks
-  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, "");
-  // 3. Remove unclosed <think>... to end
-  cleaned = cleaned.replace(/<think>[\s\S]*/gi, "");
-  // 4. Remove closed <reasoning>...</reasoning> blocks
   cleaned = cleaned.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "");
-  // 5. Remove unclosed <reasoning>... to end
   cleaned = cleaned.replace(/<reasoning>[\s\S]*/gi, "");
-  // 6. Remove standalone **Reasoning** preamble
   cleaned = cleaned.replace(/^\*\*Reasoning\*\*[\s\S]*?(?=\n\n|\n[A-Z0-9#\*])/i, "");
 
   return cleaned.trim();
@@ -68,7 +67,7 @@ function cleanReplyText(text, fallback = "Here is your response based on the stu
   return cleaned || fallback;
 }
 
-async function callGroqCompletion(messages, temperature = 0.1, max_tokens = 2500) {
+async function callGroqCompletion(messages, temperature = 0.1, max_tokens = 4000) {
   let lastError = null;
   for (const model of GROQ_MODELS) {
     try {
@@ -304,7 +303,7 @@ ${textContent.slice(0, 10000)}
   try {
     const rawText = await callGroqCompletion([
       { role: "user", content: prompt }
-    ], 0.1, 2000);
+    ], 0.1, 4000);
 
     const parsedNotes = extractJson(rawText);
 
@@ -339,7 +338,7 @@ ${safeText}
 
     let raw = await callGroqCompletion([
       { role: "user", content: prompt }
-    ], 0.2, 1500);
+    ], 0.2, 3000);
 
     return cleanReplyText(raw);
   } catch (error) {
@@ -474,7 +473,7 @@ Full Content / Transcript:
 ${contextText}
 
 CRITICAL FORMATTING INSTRUCTIONS:
-- Return ONLY direct tutor answers. Do NOT include reasoning preambles or <think> tags.
+- Output ONLY direct tutor answers. Do NOT include reasoning preambles or <think> tags.
 - Format responses beautifully using clean Markdown:
   * Use bold text (**term**) for key terms and concepts.
   * Use bullet lists (- item) for lists, flashcards, or key points.
@@ -509,7 +508,7 @@ CRITICAL FORMATTING INSTRUCTIONS:
 
     messages.push({ role: "user", content: safeString(message) });
 
-    const rawReply = await callGroqCompletion(messages, 0.3, 2500);
+    const rawReply = await callGroqCompletion(messages, 0.3, 4000);
     const cleanReply = cleanReplyText(rawReply, "Here is your response based on the study materials.");
 
     res.json({
