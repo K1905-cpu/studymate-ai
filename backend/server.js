@@ -29,8 +29,7 @@ const groq = new Groq({
 const GROQ_MODELS = [
   "groq/compound-mini",
   "groq/compound",
-  "llama-3.3-70b-versatile",
-  "llama3-8b-8192"
+  "qwen/qwen3.6-27b"
 ];
 
 async function callGroqCompletion(messages, temperature = 0.1) {
