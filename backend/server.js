@@ -123,7 +123,7 @@ async function transcribeFile(buffer, filename) {
     if (transcription && typeof transcription.text === "string") {
       return transcription.text;
     }
-    return String(transcription || "");
+    return String(transcription?.message || JSON.stringify(transcription) || "");
   } finally {
     if (fs.existsSync(tempPath)) {
       try {
@@ -135,14 +135,52 @@ async function transcribeFile(buffer, filename) {
   }
 }
 
+function safeString(val, fallback = "") {
+  if (typeof val === "string") return val;
+  if (typeof val === "object" && val !== null) {
+    return val.message || val.text || JSON.stringify(val);
+  }
+  return String(val || fallback);
+}
+
+function sanitizeNotes(notes, fallbackContent = "") {
+  if (!notes || typeof notes !== "object") {
+    return fallbackNotes(fallbackContent, "Invalid notes structure");
+  }
+
+  const safeArray = (arr, itemSanitizer) => {
+    if (!Array.isArray(arr)) return [];
+    return arr.map(itemSanitizer).filter(Boolean);
+  };
+
+  return {
+    title: safeString(notes.title, "Study Notes"),
+    summary: safeString(notes.summary, "Summary could not be generated."),
+    keyPoints: safeArray(notes.keyPoints, (p) => safeString(p)),
+    actionItems: safeArray(notes.actionItems, (a) => safeString(a)),
+    flashcards: safeArray(notes.flashcards, (card) => ({
+      question: safeString(card?.question, "Question"),
+      answer: safeString(card?.answer, "Answer"),
+    })),
+    quiz: safeArray(notes.quiz, (q) => ({
+      question: safeString(q?.question, "Question"),
+      options: safeArray(q?.options, (opt) => safeString(opt)),
+      answer: safeString(q?.answer, "Answer"),
+    })),
+  };
+}
+
 function fallbackNotes(content, reason = "AI formatting issue") {
+  const reasonStr = safeString(reason, "AI formatting issue");
+  const contentStr = typeof content === "string" ? content : safeString(content);
+
   return {
     title: "Study Notes",
-    summary: typeof content === "string" ? content.slice(0, 1000) : "Summary could not be generated.",
+    summary: contentStr.slice(0, 1000) || "Summary could not be generated.",
     keyPoints: [
       "The file was processed successfully.",
-      "AI note formatting had an issue.",
-      "You can still review the transcript below.",
+      `Note formatting info: ${reasonStr}`,
+      "You can review the transcript below.",
     ],
     actionItems: [
       "Review the transcript.",
@@ -161,7 +199,7 @@ function fallbackNotes(content, reason = "AI formatting issue") {
         answer: "Yes",
       },
     ],
-    reason,
+    reason: reasonStr,
   };
 }
 
@@ -191,8 +229,8 @@ function extractJson(text) {
 }
 
 async function generateStudyNotes(content) {
-  const textContent = typeof content === "string" ? content : (content?.text || String(content || ""));
-  
+  const textContent = typeof content === "string" ? content : safeString(content);
+
   const prompt = `
 Create comprehensive study notes from this content.
 
@@ -230,8 +268,8 @@ ${textContent.slice(0, 15000)}
 
     const parsedNotes = extractJson(rawText);
 
-    if (parsedNotes && parsedNotes.summary) {
-      return parsedNotes;
+    if (parsedNotes && (parsedNotes.summary || parsedNotes.title)) {
+      return sanitizeNotes(parsedNotes, textContent);
     }
 
     console.log("JSON extraction returned incomplete data. Using fallback.");
@@ -249,7 +287,7 @@ async function translateText(text, language) {
       return "GROQ_API_KEY is missing in Vercel Environment Variables. Please add GROQ_API_KEY in Vercel Settings -> Environment Variables.";
     }
 
-    const safeText = typeof text === "string" ? text.slice(0, 8000) : String(text || "").slice(0, 8000);
+    const safeText = typeof text === "string" ? text.slice(0, 8000) : safeString(text).slice(0, 8000);
 
     const prompt = `
 Translate this text into ${language}.
@@ -264,7 +302,7 @@ ${safeText}
     ], 0.2);
 
     raw = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-    return raw;
+    return safeString(raw);
   } catch (error) {
     console.error("Translation error details:", error);
     return `Translation failed: ${error.message || "Unknown error"}`;
@@ -317,9 +355,7 @@ app.post("/api/process-file", upload.single("file"), async function (req, res) {
       });
     }
 
-    const transcriptString = typeof extractedText === "string" 
-      ? extractedText 
-      : (extractedText?.text || String(extractedText || ""));
+    const transcriptString = safeString(extractedText);
 
     if (!transcriptString || transcriptString.trim().length < 10) {
       return res.status(400).json({
@@ -331,10 +367,12 @@ app.post("/api/process-file", upload.single("file"), async function (req, res) {
 
     res.json({
       transcript: transcriptString,
-      notes,
+      notes: sanitizeNotes(notes, transcriptString),
     });
   } catch (error) {
     console.error("Process file error:", error);
+
+    const errorMsg = typeof error === "object" ? (error.message || JSON.stringify(error)) : String(error);
 
     if (error.code === "LIMIT_FILE_SIZE") {
       return res.status(400).json({
@@ -344,7 +382,7 @@ app.post("/api/process-file", upload.single("file"), async function (req, res) {
     }
 
     res.status(500).json({
-      error: error.message || "Failed to process file.",
+      error: errorMsg || "Failed to process file.",
     });
   }
 });
@@ -362,13 +400,15 @@ app.post("/api/translate", async function (req, res) {
     const translatedText = await translateText(text, language);
 
     res.json({
-      translatedText,
+      translatedText: safeString(translatedText),
     });
   } catch (error) {
     console.error("Translation error:", error);
 
+    const errorMsg = typeof error === "object" ? (error.message || JSON.stringify(error)) : String(error);
+
     res.status(500).json({
-      error: "Translation failed.",
+      error: errorMsg || "Translation failed.",
     });
   }
 });

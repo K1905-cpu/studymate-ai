@@ -5,6 +5,17 @@ import { saveAs } from "file-saver";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
+function renderSafe(val) {
+  if (val === null || val === undefined) return "";
+  if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") {
+    return String(val);
+  }
+  if (typeof val === "object") {
+    return val.message || val.text || val.error || JSON.stringify(val);
+  }
+  return String(val);
+}
+
 class ErrorBoundary extends Component {
   constructor(props) {
     super(props);
@@ -24,7 +35,7 @@ class ErrorBoundary extends Component {
       return (
         <div style={{ padding: 40, textAlign: "center", fontFamily: "sans-serif" }}>
           <h2>Something went wrong displaying results.</h2>
-          <p style={{ color: "red" }}>{this.state.error?.message || "Render error occurred."}</p>
+          <p style={{ color: "red" }}>{renderSafe(this.state.error?.message || this.state.error)}</p>
           <button
             style={{ padding: "10px 20px", marginTop: 20, cursor: "pointer" }}
             onClick={() => this.setState({ hasError: false, error: null })}
@@ -80,14 +91,9 @@ function MainApp() {
       );
 
       setNotes(response.data.notes);
-      const rawTranscript = response.data.transcript;
-      setTranscript(
-        typeof rawTranscript === "object"
-          ? JSON.stringify(rawTranscript, null, 2)
-          : String(rawTranscript || "")
-      );
+      setTranscript(renderSafe(response.data.transcript));
     } catch (err) {
-      setError(err.response?.data?.error || err.message || "Something went wrong.");
+      setError(renderSafe(err.response?.data?.error || err.message || "Something went wrong."));
     } finally {
       setLoading(false);
     }
@@ -97,34 +103,38 @@ function MainApp() {
     if (!notes) return "";
 
     return `
-${notes.title || "Study Notes"}
+${renderSafe(notes.title) || "Study Notes"}
 
 SUMMARY
-${notes.summary || ""}
+${renderSafe(notes.summary)}
 
 KEY POINTS
-${notes.keyPoints?.map((p, i) => `${i + 1}. ${typeof p === "object" ? JSON.stringify(p) : p}`).join("\n") || ""}
+${Array.isArray(notes.keyPoints) ? notes.keyPoints.map((p, i) => `${i + 1}. ${renderSafe(p)}`).join("\n") : ""}
 
 ACTION ITEMS
-${notes.actionItems?.map((p, i) => `${i + 1}. ${typeof p === "object" ? JSON.stringify(p) : p}`).join("\n") || ""}
+${Array.isArray(notes.actionItems) ? notes.actionItems.map((p, i) => `${i + 1}. ${renderSafe(p)}`).join("\n") : ""}
 
 FLASHCARDS
 ${
-  notes.flashcards
-    ?.map((card, i) => `${i + 1}. Q: ${card.question}\nA: ${card.answer}`)
-    .join("\n\n") || ""
+  Array.isArray(notes.flashcards)
+    ? notes.flashcards
+        .map((card, i) => `${i + 1}. Q: ${renderSafe(card?.question)}\nA: ${renderSafe(card?.answer)}`)
+        .join("\n\n")
+    : ""
 }
 
 QUIZ
 ${
-  notes.quiz
-    ?.map(
-      (q, i) =>
-        `${i + 1}. ${q.question}\nOptions: ${Array.isArray(q.options) ? q.options.join(", ") : ""}\nAnswer: ${
-          q.answer
-        }`
-    )
-    .join("\n\n") || ""
+  Array.isArray(notes.quiz)
+    ? notes.quiz
+        .map(
+          (q, i) =>
+            `${i + 1}. ${renderSafe(q?.question)}\nOptions: ${
+              Array.isArray(q?.options) ? q.options.map(renderSafe).join(", ") : ""
+            }\nAnswer: ${renderSafe(q?.answer)}`
+        )
+        .join("\n\n")
+    : ""
 }
 `;
   }
@@ -141,14 +151,9 @@ ${
         language,
       });
 
-      const rawTranslation = response.data.translatedText;
-      setTranslatedText(
-        typeof rawTranslation === "object"
-          ? JSON.stringify(rawTranslation, null, 2)
-          : String(rawTranslation || "")
-      );
+      setTranslatedText(renderSafe(response.data.translatedText));
     } catch (err) {
-      setError(err.response?.data?.error || err.message || "Translation failed.");
+      setError(renderSafe(err.response?.data?.error || err.message || "Translation failed."));
     } finally {
       setTranslating(false);
     }
@@ -195,13 +200,8 @@ ${
     saveAs(blob, "studymate-notes.docx");
   }
 
-  const displayTranscript = typeof transcript === "object"
-    ? JSON.stringify(transcript, null, 2)
-    : String(transcript || "");
-
-  const displayTranslation = typeof translatedText === "object"
-    ? JSON.stringify(translatedText, null, 2)
-    : String(translatedText || "");
+  const displayTranscript = renderSafe(transcript);
+  const displayTranslation = renderSafe(translatedText);
 
   return (
     <div className="app">
@@ -229,34 +229,36 @@ ${
             {loading ? "Generating Notes..." : "Generate Study Notes"}
           </button>
 
-          {error && <p className="error">{error}</p>}
+          {error && <p className="error">{renderSafe(error)}</p>}
         </section>
 
         {notes && (
           <section className="results">
             <div className="card">
-              <h2>{notes.title || "Study Notes"}</h2>
+              <h2>{renderSafe(notes.title) || "Study Notes"}</h2>
 
               <h3>Summary</h3>
-              <p>{typeof notes.summary === "object" ? JSON.stringify(notes.summary) : notes.summary}</p>
+              <p>{renderSafe(notes.summary)}</p>
             </div>
 
             <div className="grid">
               <div className="card">
                 <h3>Important Points</h3>
                 <ul>
-                  {notes.keyPoints?.map((point, index) => (
-                    <li key={index}>{typeof point === "object" ? JSON.stringify(point) : point}</li>
-                  ))}
+                  {Array.isArray(notes.keyPoints) &&
+                    notes.keyPoints.map((point, index) => (
+                      <li key={index}>{renderSafe(point)}</li>
+                    ))}
                 </ul>
               </div>
 
               <div className="card">
                 <h3>Action Items</h3>
                 <ul>
-                  {notes.actionItems?.map((item, index) => (
-                    <li key={index}>{typeof item === "object" ? JSON.stringify(item) : item}</li>
-                  ))}
+                  {Array.isArray(notes.actionItems) &&
+                    notes.actionItems.map((item, index) => (
+                      <li key={index}>{renderSafe(item)}</li>
+                    ))}
                 </ul>
               </div>
             </div>
@@ -265,36 +267,38 @@ ${
               <h3>Revision Flashcards</h3>
 
               <div className="flashcard-grid">
-                {notes.flashcards?.map((card, index) => (
-                  <div className="flashcard" key={index}>
-                    <strong>Q: {card.question}</strong>
-                    <p>A: {card.answer}</p>
-                  </div>
-                ))}
+                {Array.isArray(notes.flashcards) &&
+                  notes.flashcards.map((card, index) => (
+                    <div className="flashcard" key={index}>
+                      <strong>Q: {renderSafe(card?.question)}</strong>
+                      <p>A: {renderSafe(card?.answer)}</p>
+                    </div>
+                  ))}
               </div>
             </div>
 
             <div className="card">
               <h3>Quiz Questions</h3>
 
-              {notes.quiz?.map((q, index) => (
-                <div className="quiz" key={index}>
-                  <strong>
-                    {index + 1}. {q.question}
-                  </strong>
+              {Array.isArray(notes.quiz) &&
+                notes.quiz.map((q, index) => (
+                  <div className="quiz" key={index}>
+                    <strong>
+                      {index + 1}. {renderSafe(q?.question)}
+                    </strong>
 
-                  <ul>
-                    {Array.isArray(q.options) &&
-                      q.options.map((option, idx) => (
-                        <li key={idx}>{option}</li>
-                      ))}
-                  </ul>
+                    <ul>
+                      {Array.isArray(q?.options) &&
+                        q.options.map((option, idx) => (
+                          <li key={idx}>{renderSafe(option)}</li>
+                        ))}
+                    </ul>
 
-                  <p>
-                    <b>Answer:</b> {q.answer}
-                  </p>
-                </div>
-              ))}
+                    <p>
+                      <b>Answer:</b> {renderSafe(q?.answer)}
+                    </p>
+                  </div>
+                ))}
             </div>
 
             <div className="card actions">
