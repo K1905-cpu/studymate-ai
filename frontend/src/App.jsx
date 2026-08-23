@@ -49,9 +49,72 @@ class ErrorBoundary extends Component {
   }
 }
 
+function writeString(view, offset, string) {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i));
+  }
+}
+
+function encodeMonoWav(audioBuffer, targetSampleRate = 16000) {
+  let inputData = audioBuffer.getChannelData(0);
+  if (audioBuffer.numberOfChannels > 1) {
+    const channel2 = audioBuffer.getChannelData(1);
+    const mix = new Float32Array(audioBuffer.length);
+    for (let i = 0; i < audioBuffer.length; i++) {
+      mix[i] = (inputData[i] + channel2[i]) / 2;
+    }
+    inputData = mix;
+  }
+
+  const sampleRatio = audioBuffer.sampleRate / targetSampleRate;
+  const newLength = Math.round(audioBuffer.length / sampleRatio);
+  const result = new Float32Array(newLength);
+  let offsetResult = 0;
+  let offsetInput = 0;
+
+  while (offsetResult < result.length) {
+    const nextOffsetInput = Math.round((offsetResult + 1) * sampleRatio);
+    let accum = 0, count = 0;
+    for (let i = offsetInput; i < nextOffsetInput && i < inputData.length; i++) {
+      accum += inputData[i];
+      count++;
+    }
+    result[offsetResult] = count > 0 ? accum / count : 0;
+    offsetResult++;
+    offsetInput = nextOffsetInput;
+  }
+
+  const wavBuffer = new ArrayBuffer(44 + result.length * 2);
+  const view = new DataView(wavBuffer);
+
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + result.length * 2, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, targetSampleRate, true);
+  view.setUint32(28, targetSampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, result.length * 2, true);
+
+  let offset = 44;
+  for (let i = 0; i < result.length; i++) {
+    const s = Math.max(-1, Math.min(1, result[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    offset += 2;
+  }
+
+  return new Blob([view], { type: 'audio/wav' });
+}
+
 function MainApp() {
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [compressing, setCompressing] = useState(false);
   const [notes, setNotes] = useState(null);
   const [transcript, setTranscript] = useState("");
   const [error, setError] = useState("");
@@ -61,6 +124,23 @@ function MainApp() {
 
   const MAX_FILE_SIZE_MB = 4.5;
 
+  function isAudioOrVideoFile(f) {
+    if (!f) return false;
+    const name = f.name.toLowerCase();
+    const type = f.type.toLowerCase();
+    return (
+      type.startsWith("audio/") ||
+      type.startsWith("video/") ||
+      name.endsWith(".mp3") ||
+      name.endsWith(".wav") ||
+      name.endsWith(".m4a") ||
+      name.endsWith(".mp4") ||
+      name.endsWith(".mov") ||
+      name.endsWith(".webm") ||
+      name.endsWith(".mkv")
+    );
+  }
+
   function handleFileChange(e) {
     const selectedFile = e.target.files[0];
     setFile(selectedFile);
@@ -68,14 +148,28 @@ function MainApp() {
     setNotes(null);
     setTranscript("");
     setTranslatedText("");
+  }
 
-    if (selectedFile) {
-      const fileSizeMB = selectedFile.size / (1024 * 1024);
-      if (fileSizeMB > MAX_FILE_SIZE_MB) {
-        setError(
-          `File size is ${fileSizeMB.toFixed(1)} MB. Vercel serverless limits file uploads to 4.5 MB per file. Please select a file under 4.5 MB.`
-        );
-      }
+  async function compressMediaIfNeeded(originalFile) {
+    if (!isAudioOrVideoFile(originalFile)) return originalFile;
+    if (originalFile.size <= MAX_FILE_SIZE_MB * 1024 * 1024) return originalFile;
+
+    try {
+      setCompressing(true);
+      const arrayBuffer = await originalFile.arrayBuffer();
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      const wavBlob = encodeMonoWav(audioBuffer, 16000);
+      
+      const newName = originalFile.name.replace(/\.[^/.]+$/, "") + "-compressed.wav";
+      const compressedFile = new File([wavBlob], newName, { type: "audio/wav" });
+      audioContext.close();
+      return compressedFile;
+    } catch (err) {
+      console.warn("Client side audio extraction failed:", err);
+      return originalFile;
+    } finally {
+      setCompressing(false);
     }
   }
 
@@ -85,20 +179,26 @@ function MainApp() {
       return;
     }
 
-    const fileSizeMB = file.size / (1024 * 1024);
-    if (fileSizeMB > MAX_FILE_SIZE_MB) {
-      setError(
-        `File size is ${fileSizeMB.toFixed(1)} MB. Vercel serverless limits file uploads to 4.5 MB per file. Please select a file under 4.5 MB.`
-      );
-      return;
-    }
-
     try {
       setLoading(true);
       setError("");
 
+      let fileToUpload = file;
+      if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024 && isAudioOrVideoFile(file)) {
+        fileToUpload = await compressMediaIfNeeded(file);
+      }
+
+      const fileSizeMB = fileToUpload.size / (1024 * 1024);
+      if (fileSizeMB > MAX_FILE_SIZE_MB) {
+        setError(
+          `File size (${fileSizeMB.toFixed(1)} MB) exceeds Vercel's 4.5 MB serverless limit. Please trim or select an audio/video/PDF file under 4.5 MB.`
+        );
+        setLoading(false);
+        return;
+      }
+
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", fileToUpload);
 
       const response = await axios.post(
         `${API_BASE_URL}/api/process-file`,
@@ -239,14 +339,22 @@ ${
       <main className="container">
         <section className="card upload-card">
           <h2>Upload Lecture File</h2>
-          <p className="muted">Supported: audio, video, PDF, TXT</p>
+          <p className="muted">Supported: audio, video, PDF, TXT (Vercel max payload: 4.5 MB)</p>
 
           <input type="file" onChange={handleFileChange} />
 
-          {file && <p className="file-name">Selected: {file.name}</p>}
+          {file && (
+            <p className="file-name">
+              Selected: {file.name} ({(file.size / (1024 * 1024)).toFixed(1)} MB)
+            </p>
+          )}
 
-          <button onClick={handleUpload} disabled={loading}>
-            {loading ? "Generating Notes..." : "Generate Study Notes"}
+          <button onClick={handleUpload} disabled={loading || compressing}>
+            {compressing
+              ? "Extracting & Compressing Audio..."
+              : loading
+              ? "Generating Notes..."
+              : "Generate Study Notes"}
           </button>
 
           {error && <p className="error">{renderSafe(error)}</p>}
