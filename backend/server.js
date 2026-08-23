@@ -4,6 +4,7 @@ import multer from "multer";
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
+import os from "os";
 import { createRequire } from "module";
 import Groq from "groq-sdk";
 
@@ -28,20 +29,7 @@ const groq = new Groq({
 app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 
-const uploadDir = path.join(process.cwd(), "uploads");
-
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir);
-}
-
-const storage = multer.diskStorage({
-  destination(req, file, cb) {
-    cb(null, uploadDir);
-  },
-  filename(req, file, cb) {
-    cb(null, `${Date.now()}-${file.originalname}`);
-  },
-});
+const storage = multer.memoryStorage();
 
 const upload = multer({
   storage,
@@ -90,18 +78,30 @@ function checkFileSize(mimetype, filename, fileSizeMB) {
   return null;
 }
 
-async function extractPdfText(filePath) {
-  const dataBuffer = fs.readFileSync(filePath);
-  const parsed = await pdfParse(dataBuffer);
+async function extractPdfText(buffer) {
+  const parsed = await pdfParse(buffer);
   return parsed.text || "";
 }
 
-async function transcribeFile(filePath) {
-  return await groq.audio.transcriptions.create({
-    file: fs.createReadStream(filePath),
-    model: "whisper-large-v3",
-    response_format: "text",
-  });
+async function transcribeFile(buffer, filename) {
+  const tempPath = path.join(os.tmpdir(), `${Date.now()}-${filename}`);
+  try {
+    fs.writeFileSync(tempPath, buffer);
+    const transcription = await groq.audio.transcriptions.create({
+      file: fs.createReadStream(tempPath),
+      model: "whisper-large-v3",
+      response_format: "text",
+    });
+    return transcription;
+  } finally {
+    if (fs.existsSync(tempPath)) {
+      try {
+        fs.unlinkSync(tempPath);
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+    }
+  }
 }
 
 function fallbackNotes(content, reason = "AI formatting issue") {
@@ -254,16 +254,12 @@ app.get("/", function (req, res) {
 });
 
 app.post("/api/process-file", upload.single("file"), async function (req, res) {
-  let filePath;
-
   try {
     if (!req.file) {
       return res.status(400).json({
         error: "No file uploaded",
       });
     }
-
-    filePath = req.file.path;
 
     const mimetype = req.file.mimetype;
     const filename = req.file.originalname;
@@ -280,11 +276,11 @@ app.post("/api/process-file", upload.single("file"), async function (req, res) {
     let extractedText = "";
 
     if (isAudioOrVideo(mimetype, filename)) {
-      extractedText = await transcribeFile(filePath);
+      extractedText = await transcribeFile(req.file.buffer, filename);
     } else if (isPdf(mimetype, filename)) {
-      extractedText = await extractPdfText(filePath);
+      extractedText = await extractPdfText(req.file.buffer);
     } else if (isText(mimetype, filename)) {
-      extractedText = fs.readFileSync(filePath, "utf-8");
+      extractedText = req.file.buffer.toString("utf-8");
     } else {
       return res.status(400).json({
         error:
@@ -317,10 +313,6 @@ app.post("/api/process-file", upload.single("file"), async function (req, res) {
     res.status(500).json({
       error: error.message || "Failed to process file.",
     });
-  } finally {
-    if (filePath && fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
   }
 });
 
@@ -348,10 +340,14 @@ app.post("/api/translate", async function (req, res) {
   }
 });
 
-const server = app.listen(PORT, "0.0.0.0", function () {
-  console.log(`StudyMate AI backend running on port ${PORT}`);
-});
+if (!process.env.VERCEL) {
+  const server = app.listen(PORT, "0.0.0.0", function () {
+    console.log(`StudyMate AI backend running on port ${PORT}`);
+  });
 
-server.on("error", function (error) {
-  console.error("Server error:", error);
-});
+  server.on("error", function (error) {
+    console.error("Server error:", error);
+  });
+}
+
+export default app;
