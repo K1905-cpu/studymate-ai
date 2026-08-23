@@ -1,11 +1,44 @@
-import { useState } from "react";
+import { useState, Component } from "react";
 import axios from "axios";
 import { Document, Packer, Paragraph, TextRun } from "docx";
 import { saveAs } from "file-saver";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
-export default function App() {
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("Uncaught UI Error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: 40, textAlign: "center", fontFamily: "sans-serif" }}>
+          <h2>Something went wrong displaying results.</h2>
+          <p style={{ color: "red" }}>{this.state.error?.message || "Render error occurred."}</p>
+          <button
+            style={{ padding: "10px 20px", marginTop: 20, cursor: "pointer" }}
+            onClick={() => this.setState({ hasError: false, error: null })}
+          >
+            Try Again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function MainApp() {
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [notes, setNotes] = useState(null);
@@ -47,9 +80,14 @@ export default function App() {
       );
 
       setNotes(response.data.notes);
-      setTranscript(response.data.transcript);
+      const rawTranscript = response.data.transcript;
+      setTranscript(
+        typeof rawTranscript === "object"
+          ? JSON.stringify(rawTranscript, null, 2)
+          : String(rawTranscript || "")
+      );
     } catch (err) {
-      setError(err.response?.data?.error || "Something went wrong.");
+      setError(err.response?.data?.error || err.message || "Something went wrong.");
     } finally {
       setLoading(false);
     }
@@ -65,10 +103,10 @@ SUMMARY
 ${notes.summary || ""}
 
 KEY POINTS
-${notes.keyPoints?.map((p, i) => `${i + 1}. ${p}`).join("\n") || ""}
+${notes.keyPoints?.map((p, i) => `${i + 1}. ${typeof p === "object" ? JSON.stringify(p) : p}`).join("\n") || ""}
 
 ACTION ITEMS
-${notes.actionItems?.map((p, i) => `${i + 1}. ${p}`).join("\n") || ""}
+${notes.actionItems?.map((p, i) => `${i + 1}. ${typeof p === "object" ? JSON.stringify(p) : p}`).join("\n") || ""}
 
 FLASHCARDS
 ${
@@ -82,7 +120,7 @@ ${
   notes.quiz
     ?.map(
       (q, i) =>
-        `${i + 1}. ${q.question}\nOptions: ${q.options?.join(", ")}\nAnswer: ${
+        `${i + 1}. ${q.question}\nOptions: ${Array.isArray(q.options) ? q.options.join(", ") : ""}\nAnswer: ${
           q.answer
         }`
     )
@@ -103,7 +141,12 @@ ${
         language,
       });
 
-      setTranslatedText(response.data.translatedText);
+      const rawTranslation = response.data.translatedText;
+      setTranslatedText(
+        typeof rawTranslation === "object"
+          ? JSON.stringify(rawTranslation, null, 2)
+          : String(rawTranslation || "")
+      );
     } catch (err) {
       setError(err.response?.data?.error || err.message || "Translation failed.");
     } finally {
@@ -111,46 +154,55 @@ ${
     }
   }
 
-async function downloadWord() {
-  if (!notes) return;
+  async function downloadWord() {
+    if (!notes) return;
 
-  const text = translatedText || getNotesAsText();
+    const text = translatedText || getNotesAsText();
 
-  const doc = new Document({
-    sections: [
-      {
-        children: [
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: "StudyMate AI Notes",
-                bold: true,
-                size: 32,
-              }),
-            ],
-          }),
+    const doc = new Document({
+      sections: [
+        {
+          children: [
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: "StudyMate AI Notes",
+                  bold: true,
+                  size: 32,
+                }),
+              ],
+            }),
 
-          new Paragraph(""),
+            new Paragraph(""),
 
-          ...text.split("\n").map(
-            (line) =>
-              new Paragraph({
-                children: [
-                  new TextRun({
-                    text: line,
-                    size: 24,
-                  }),
-                ],
-              })
-          ),
-        ],
-      },
-    ],
-  });
+            ...text.split("\n").map(
+              (line) =>
+                new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: line,
+                      size: 24,
+                    }),
+                  ],
+                })
+            ),
+          ],
+        },
+      ],
+    });
 
-  const blob = await Packer.toBlob(doc);
-  saveAs(blob, "studymate-notes.docx");
-}
+    const blob = await Packer.toBlob(doc);
+    saveAs(blob, "studymate-notes.docx");
+  }
+
+  const displayTranscript = typeof transcript === "object"
+    ? JSON.stringify(transcript, null, 2)
+    : String(transcript || "");
+
+  const displayTranslation = typeof translatedText === "object"
+    ? JSON.stringify(translatedText, null, 2)
+    : String(translatedText || "");
+
   return (
     <div className="app">
       <header className="hero">
@@ -183,10 +235,10 @@ async function downloadWord() {
         {notes && (
           <section className="results">
             <div className="card">
-              <h2>{notes.title}</h2>
+              <h2>{notes.title || "Study Notes"}</h2>
 
               <h3>Summary</h3>
-              <p>{notes.summary}</p>
+              <p>{typeof notes.summary === "object" ? JSON.stringify(notes.summary) : notes.summary}</p>
             </div>
 
             <div className="grid">
@@ -194,7 +246,7 @@ async function downloadWord() {
                 <h3>Important Points</h3>
                 <ul>
                   {notes.keyPoints?.map((point, index) => (
-                    <li key={index}>{point}</li>
+                    <li key={index}>{typeof point === "object" ? JSON.stringify(point) : point}</li>
                   ))}
                 </ul>
               </div>
@@ -203,7 +255,7 @@ async function downloadWord() {
                 <h3>Action Items</h3>
                 <ul>
                   {notes.actionItems?.map((item, index) => (
-                    <li key={index}>{item}</li>
+                    <li key={index}>{typeof item === "object" ? JSON.stringify(item) : item}</li>
                   ))}
                 </ul>
               </div>
@@ -232,9 +284,10 @@ async function downloadWord() {
                   </strong>
 
                   <ul>
-                    {q.options?.map((option, idx) => (
-                      <li key={idx}>{option}</li>
-                    ))}
+                    {Array.isArray(q.options) &&
+                      q.options.map((option, idx) => (
+                        <li key={idx}>{option}</li>
+                      ))}
                   </ul>
 
                   <p>
@@ -270,20 +323,28 @@ async function downloadWord() {
               <button onClick={downloadWord}>Download Word</button>
             </div>
 
-            {translatedText && (
+            {displayTranslation && (
               <div className="card">
                 <h3>Translated Notes</h3>
-                <pre>{translatedText}</pre>
+                <pre>{displayTranslation}</pre>
               </div>
             )}
 
             <details className="card">
               <summary>View Transcript</summary>
-              <pre>{transcript}</pre>
+              <pre>{displayTranscript}</pre>
             </details>
           </section>
         )}
       </main>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <MainApp />
+    </ErrorBoundary>
   );
 }

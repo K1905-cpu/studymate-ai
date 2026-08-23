@@ -117,7 +117,13 @@ async function transcribeFile(buffer, filename) {
       model: "whisper-large-v3",
       response_format: "text",
     });
-    return transcription;
+    if (typeof transcription === "string") {
+      return transcription;
+    }
+    if (transcription && typeof transcription.text === "string") {
+      return transcription.text;
+    }
+    return String(transcription || "");
   } finally {
     if (fs.existsSync(tempPath)) {
       try {
@@ -132,7 +138,7 @@ async function transcribeFile(buffer, filename) {
 function fallbackNotes(content, reason = "AI formatting issue") {
   return {
     title: "Study Notes",
-    summary: content.slice(0, 1000) || "Summary could not be generated.",
+    summary: typeof content === "string" ? content.slice(0, 1000) : "Summary could not be generated.",
     keyPoints: [
       "The file was processed successfully.",
       "AI note formatting had an issue.",
@@ -185,6 +191,8 @@ function extractJson(text) {
 }
 
 async function generateStudyNotes(content) {
+  const textContent = typeof content === "string" ? content : (content?.text || String(content || ""));
+  
   const prompt = `
 Create comprehensive study notes from this content.
 
@@ -212,7 +220,7 @@ Use this JSON structure:
 }
 
 Content:
-${content.slice(0, 15000)}
+${textContent.slice(0, 15000)}
 `;
 
   try {
@@ -227,10 +235,10 @@ ${content.slice(0, 15000)}
     }
 
     console.log("JSON extraction returned incomplete data. Using fallback.");
-    return fallbackNotes(content, "JSON parsing issue");
+    return fallbackNotes(textContent, "JSON parsing issue");
   } catch (error) {
     console.error("Study notes error:", error.message);
-    return fallbackNotes(content, error.message);
+    return fallbackNotes(textContent, error.message);
   }
 }
 
@@ -241,7 +249,7 @@ async function translateText(text, language) {
       return "GROQ_API_KEY is missing in Vercel Environment Variables. Please add GROQ_API_KEY in Vercel Settings -> Environment Variables.";
     }
 
-    const safeText = text ? text.slice(0, 8000) : "";
+    const safeText = typeof text === "string" ? text.slice(0, 8000) : String(text || "").slice(0, 8000);
 
     const prompt = `
 Translate this text into ${language}.
@@ -309,16 +317,20 @@ app.post("/api/process-file", upload.single("file"), async function (req, res) {
       });
     }
 
-    if (!extractedText || extractedText.trim().length < 20) {
+    const transcriptString = typeof extractedText === "string" 
+      ? extractedText 
+      : (extractedText?.text || String(extractedText || ""));
+
+    if (!transcriptString || transcriptString.trim().length < 10) {
       return res.status(400).json({
         error: "Could not extract enough text from this file.",
       });
     }
 
-    const notes = await generateStudyNotes(extractedText);
+    const notes = await generateStudyNotes(transcriptString);
 
     res.json({
-      transcript: extractedText,
+      transcript: transcriptString,
       notes,
     });
   } catch (error) {
