@@ -17,8 +17,8 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 const LIMITS_MB = {
-  audioVideo: 20,
-  pdf: 10,
+  audioVideo: 4.5,
+  pdf: 4.5,
   txt: 2,
 };
 
@@ -52,14 +52,15 @@ async function callGroqCompletion(messages, temperature = 0.1) {
 }
 
 app.use(cors());
-app.use(express.json({ limit: "20mb" }));
+app.use(express.json({ limit: "4.5mb" }));
+app.use(express.urlencoded({ limit: "4.5mb", extended: true }));
 
 const storage = multer.memoryStorage();
 
 const upload = multer({
   storage,
   limits: {
-    fileSize: 25 * 1024 * 1024,
+    fileSize: 4.5 * 1024 * 1024,
   },
 });
 
@@ -89,15 +90,15 @@ function isAudioOrVideo(mimetype, filename = "") {
 
 function checkFileSize(mimetype, filename, fileSizeMB) {
   if (isAudioOrVideo(mimetype, filename) && fileSizeMB > LIMITS_MB.audioVideo) {
-    return `Audio/video file too large. Allowed size: 0 MB to ${LIMITS_MB.audioVideo} MB. Your file: ${fileSizeMB.toFixed(2)} MB.`;
+    return `Audio/video file is too large (${fileSizeMB.toFixed(1)} MB). Vercel serverless limit is 4.5 MB. Please select a file under 4.5 MB.`;
   }
 
   if (isPdf(mimetype, filename) && fileSizeMB > LIMITS_MB.pdf) {
-    return `PDF file too large. Allowed size: 0 MB to ${LIMITS_MB.pdf} MB. Your file: ${fileSizeMB.toFixed(2)} MB.`;
+    return `PDF file is too large (${fileSizeMB.toFixed(1)} MB). Vercel serverless limit is 4.5 MB. Please select a file under 4.5 MB.`;
   }
 
   if (isText(mimetype, filename) && fileSizeMB > LIMITS_MB.txt) {
-    return `TXT file too large. Allowed size: 0 MB to ${LIMITS_MB.txt} MB. Your file: ${fileSizeMB.toFixed(2)} MB.`;
+    return `TXT file too large (${fileSizeMB.toFixed(1)} MB). Allowed size: 0 MB to ${LIMITS_MB.txt} MB.`;
   }
 
   return null;
@@ -351,7 +352,7 @@ app.post("/api/process-file", upload.single("file"), async function (req, res) {
     } else {
       return res.status(400).json({
         error:
-          "Unsupported file type. Upload audio/video, PDF, or TXT. Allowed sizes: audio/video 0-20 MB, PDF 0-10 MB, TXT 0-2 MB.",
+          "Unsupported file type. Upload audio/video, PDF, or TXT. Allowed sizes: audio/video 0-4.5 MB, PDF 0-4.5 MB, TXT 0-2 MB.",
       });
     }
 
@@ -377,7 +378,7 @@ app.post("/api/process-file", upload.single("file"), async function (req, res) {
     if (error.code === "LIMIT_FILE_SIZE") {
       return res.status(400).json({
         error:
-          "File too large. Allowed sizes: audio/video 0-20 MB, PDF 0-10 MB, TXT 0-2 MB.",
+          "File size exceeds the 4.5 MB Vercel upload limit. Please select a smaller file under 4.5 MB.",
       });
     }
 
@@ -411,6 +412,20 @@ app.post("/api/translate", async function (req, res) {
       error: errorMsg || "Translation failed.",
     });
   }
+});
+
+app.use(function (err, req, res, next) {
+  if (err && (err.type === "entity.too.large" || err.status === 413 || err.code === "LIMIT_FILE_SIZE")) {
+    return res.status(400).json({
+      error: "File size exceeds the 4.5 MB Vercel upload limit. Please select a smaller audio or PDF file under 4.5 MB.",
+    });
+  }
+  if (err) {
+    return res.status(500).json({
+      error: safeString(err.message || err) || "An unexpected server error occurred.",
+    });
+  }
+  next();
 });
 
 const server = app.listen(PORT, "0.0.0.0", function () {

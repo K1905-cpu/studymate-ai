@@ -59,17 +59,37 @@ function MainApp() {
   const [translatedText, setTranslatedText] = useState("");
   const [translating, setTranslating] = useState(false);
 
+  const MAX_FILE_SIZE_MB = 4.5;
+
   function handleFileChange(e) {
-    setFile(e.target.files[0]);
+    const selectedFile = e.target.files[0];
+    setFile(selectedFile);
     setError("");
     setNotes(null);
     setTranscript("");
     setTranslatedText("");
+
+    if (selectedFile) {
+      const fileSizeMB = selectedFile.size / (1024 * 1024);
+      if (fileSizeMB > MAX_FILE_SIZE_MB) {
+        setError(
+          `File size is ${fileSizeMB.toFixed(1)} MB. Vercel serverless limits file uploads to 4.5 MB per file. Please select a file under 4.5 MB.`
+        );
+      }
+    }
   }
 
   async function handleUpload() {
     if (!file) {
       setError("Please select a file first.");
+      return;
+    }
+
+    const fileSizeMB = file.size / (1024 * 1024);
+    if (fileSizeMB > MAX_FILE_SIZE_MB) {
+      setError(
+        `File size is ${fileSizeMB.toFixed(1)} MB. Vercel serverless limits file uploads to 4.5 MB per file. Please select a file under 4.5 MB.`
+      );
       return;
     }
 
