@@ -32,29 +32,44 @@ const GROQ_MODELS = [
   "groq/compound"
 ];
 
-function stripReasoning(text) {
-  if (!text) return "";
-  let cleaned = typeof text === "string" ? text : safeString(text);
+function stripReasoning(raw) {
+  if (!raw) return "";
+  let text = typeof raw === "string" ? raw : safeString(raw);
 
-  if (cleaned.includes("</think>")) {
-    const thinkEnd = cleaned.indexOf("</think>");
-    cleaned = cleaned.slice(thinkEnd + 8);
+  let answerPart = "";
+  if (text.includes("</think>")) {
+    const thinkEnd = text.indexOf("</think>");
+    answerPart = text.slice(thinkEnd + 8).trim();
   } else {
-    cleaned = cleaned.replace(/<think>[\s\S]*/gi, "");
+    answerPart = text.replace(/<think>[\s\S]*/gi, "").trim();
   }
 
-  if (cleaned.includes("**Answer")) {
-    const parts = cleaned.split(/\*\*Answer.*?\*\*/i);
-    if (parts.length > 1 && parts[parts.length - 1].trim().length > 5) {
-      cleaned = parts[parts.length - 1];
+  // If answerPart is too short (e.g. just "B" or empty), but <think> contains the questions!
+  if (answerPart.length < 50 && text.includes("<think>")) {
+    const thinkContent = text.match(/<think>([\s\S]*?)(?:<\/think>|$)/i)?.[1] || "";
+    const qMatch = thinkContent.match(/(?:1[\.\)]|Question 1|\*\*Question 1\*\*|Q1:)[\s\S]*/i);
+    if (qMatch) {
+      answerPart = qMatch[0].trim();
+    } else {
+      const cleanThink = thinkContent.replace(/Here's a thinking process[\s\S]*?:\n/i, "").trim();
+      if (cleanThink.length > 50) {
+        answerPart = cleanThink;
+      }
     }
   }
 
-  cleaned = cleaned.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "");
-  cleaned = cleaned.replace(/<reasoning>[\s\S]*/gi, "");
-  cleaned = cleaned.replace(/^\*\*Reasoning\*\*[\s\S]*?(?=\n\n|\n[A-Z0-9#\*])/i, "");
+  if (answerPart.includes("**Answer")) {
+    const parts = answerPart.split(/\*\*Answer.*?\*\*/i);
+    if (parts.length > 1 && parts[parts.length - 1].trim().length > 5) {
+      answerPart = parts[parts.length - 1];
+    }
+  }
 
-  return cleaned.trim();
+  answerPart = answerPart.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "");
+  answerPart = answerPart.replace(/<reasoning>[\s\S]*/gi, "");
+  answerPart = answerPart.replace(/^\*\*Reasoning\*\*[\s\S]*?(?=\n\n|\n[A-Z0-9#\*])/i, "");
+
+  return answerPart.trim();
 }
 
 function cleanReplyText(text, fallback = "Here is your response based on the study materials.") {
@@ -473,7 +488,8 @@ Full Content / Transcript:
 ${contextText}
 
 CRITICAL FORMATTING INSTRUCTIONS:
-- Output ONLY direct tutor answers. Do NOT include reasoning preambles or <think> tags.
+- When asked for quiz questions, ALWAYS write all 5 full quiz questions with options A, B, C, D and the correct answer in your output.
+- Do NOT output your final questions inside <think> tags. Write the full questions in the main response body.
 - Format responses beautifully using clean Markdown:
   * Use bold text (**term**) for key terms and concepts.
   * Use bullet lists (- item) for lists, flashcards, or key points.

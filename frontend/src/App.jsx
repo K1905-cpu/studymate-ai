@@ -18,13 +18,34 @@ function renderSafe(val) {
 
 function cleanChatText(val) {
   const safe = renderSafe(val);
-  let cleaned = safe
-    .replace(/<think>[\s\S]*?<\/think>/gi, "")
-    .replace(/<think>[\s\S]*/gi, "")
+
+  let answerPart = "";
+  if (safe.includes("</think>")) {
+    const thinkEnd = safe.indexOf("</think>");
+    answerPart = safe.slice(thinkEnd + 8).trim();
+  } else {
+    answerPart = safe.replace(/<think>[\s\S]*/gi, "").trim();
+  }
+
+  if (answerPart.length < 50 && safe.includes("<think>")) {
+    const thinkContent = safe.match(/<think>([\s\S]*?)(?:<\/think>|$)/i)?.[1] || "";
+    const qMatch = thinkContent.match(/(?:1[\.\)]|Question 1|\*\*Question 1\*\*|Q1:)[\s\S]*/i);
+    if (qMatch) {
+      answerPart = qMatch[0].trim();
+    } else {
+      const cleanThink = thinkContent.replace(/Here's a thinking process[\s\S]*?:\n/i, "").trim();
+      if (cleanThink.length > 50) {
+        answerPart = cleanThink;
+      }
+    }
+  }
+
+  let cleaned = answerPart
     .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "")
     .replace(/<reasoning>[\s\S]*/gi, "")
     .trim();
-  return cleaned;
+
+  return cleaned || safe;
 }
 
 function renderInlineFormatting(text) {
@@ -651,7 +672,7 @@ ${
                 <button
                   type="button"
                   className="chip-btn"
-                  onClick={() => handleSendChat("Generate 3 more Flashcards")}
+                  onClick={() => handleSendChat("Generate 3 revision flashcards based on the lecture notes with Question and Answer.")}
                   disabled={chatLoading}
                 >
                   💡 Generate 3 more Flashcards
@@ -659,7 +680,7 @@ ${
                 <button
                   type="button"
                   className="chip-btn"
-                  onClick={() => handleSendChat("Create 5 extra Quiz Questions with answer options")}
+                  onClick={() => handleSendChat("Create 5 extra multiple-choice quiz questions with answer options A, B, C, D and correct answers based on the uploaded lecture notes.")}
                   disabled={chatLoading}
                 >
                   ❓ Create 5 extra Quiz Questions
@@ -667,7 +688,7 @@ ${
                 <button
                   type="button"
                   className="chip-btn"
-                  onClick={() => handleSendChat("Summarize key formulas, definitions, and core concepts")}
+                  onClick={() => handleSendChat("Summarize key formulas, definitions, and core concepts from the lecture notes.")}
                   disabled={chatLoading}
                 >
                   📌 Key Formulas & Definitions
@@ -675,7 +696,7 @@ ${
                 <button
                   type="button"
                   className="chip-btn"
-                  onClick={() => handleSendChat("Explain the main topic in simple terms for beginners")}
+                  onClick={() => handleSendChat("Explain the main topic of the lecture notes in simple terms for a beginner.")}
                   disabled={chatLoading}
                 >
                   📝 Explain Simply
