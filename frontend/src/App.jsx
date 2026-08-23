@@ -29,10 +29,13 @@ function cleanChatText(val) {
 
 function renderInlineFormatting(text) {
   if (typeof text !== "string") return text;
-  const parts = text.split(/(\*\*.*?\*\*)/g);
+  const parts = text.split(/(\*\*.*?\*\*|\*.*?\*)/g);
   return parts.map((part, index) => {
     if (part.startsWith("**") && part.endsWith("**")) {
       return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
+      return <em key={index}>{part.slice(1, -1)}</em>;
     }
     return part;
   });
@@ -43,69 +46,115 @@ function FormattedText({ content }) {
   if (!clean) return null;
 
   const lines = clean.split("\n");
-  const elements = [];
-  let currentList = null;
+  const blocks = [];
+  let i = 0;
 
-  lines.forEach((line, i) => {
+  while (i < lines.length) {
+    const line = lines[i];
     const trimmed = line.trim();
+
     if (!trimmed) {
-      if (currentList) {
-        elements.push(currentList);
-        currentList = null;
-      }
-      return;
+      i++;
+      continue;
     }
 
+    // Check for Markdown Table (lines starting with |)
+    if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
+      const tableLines = [];
+      while (i < lines.length && lines[i].trim().startsWith("|")) {
+        const rowStr = lines[i].trim();
+        // Ignore table separator row |---|---|
+        const isSeparator = /^\|[\s:\-]+\|$/i.test(rowStr) || /^\|(?:\s*:?-+:?\s*\|)+$/i.test(rowStr);
+        if (!isSeparator) {
+          tableLines.push(rowStr);
+        }
+        i++;
+      }
+
+      if (tableLines.length > 0) {
+        const headerRow = tableLines[0]
+          .split("|")
+          .filter((_, idx, arr) => idx > 0 && idx < arr.length - 1)
+          .map((cell) => cell.trim());
+
+        const bodyRows = tableLines.slice(1).map((row) =>
+          row
+            .split("|")
+            .filter((_, idx, arr) => idx > 0 && idx < arr.length - 1)
+            .map((cell) => cell.trim())
+        );
+
+        blocks.push(
+          <div key={`table-${i}`} className="chat-table-wrapper">
+            <table className="chat-table">
+              <thead>
+                <tr>
+                  {headerRow.map((h, hIdx) => (
+                    <th key={hIdx}>{renderInlineFormatting(h)}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {bodyRows.map((r, rIdx) => (
+                  <tr key={rIdx}>
+                    {r.map((c, cIdx) => (
+                      <td key={cIdx}>{renderInlineFormatting(c)}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+        continue;
+      }
+    }
+
+    // Check for Bullet / List Item
     const bulletMatch = trimmed.match(/^[-*•]\s+(.*)/) || trimmed.match(/^(\d+[\.\)])\s+(.*)/);
-
     if (bulletMatch) {
-      const itemText = bulletMatch[2] || bulletMatch[1];
-      const parsedContent = renderInlineFormatting(itemText);
-      if (!currentList) {
-        currentList = { type: "ul", items: [] };
+      const listItems = [];
+      while (i < lines.length) {
+        const itemTrimmed = lines[i].trim();
+        const itemMatch = itemTrimmed.match(/^[-*•]\s+(.*)/) || itemTrimmed.match(/^(\d+[\.\)])\s+(.*)/);
+        if (itemMatch) {
+          const itemText = itemMatch[2] || itemMatch[1];
+          listItems.push(<li key={`li-${i}`}>{renderInlineFormatting(itemText)}</li>);
+          i++;
+        } else {
+          break;
+        }
       }
-      currentList.items.push(<li key={i}>{parsedContent}</li>);
-    } else {
-      if (currentList) {
-        elements.push(currentList);
-        currentList = null;
-      }
-
-      if (trimmed.startsWith("###") || trimmed.startsWith("##") || trimmed.startsWith("#")) {
-        const headerText = trimmed.replace(/^#+\s*/, "");
-        elements.push(
-          <h4 key={i} style={{ margin: "12px 0 6px 0", color: "#1e293b", fontSize: "15px", fontWeight: "700" }}>
-            {renderInlineFormatting(headerText)}
-          </h4>
-        );
-      } else {
-        elements.push(
-          <p key={i} style={{ margin: "4px 0 8px 0", lineHeight: "1.5" }}>
-            {renderInlineFormatting(trimmed)}
-          </p>
-        );
-      }
+      blocks.push(
+        <ul key={`ul-${i}`} style={{ margin: "8px 0", paddingLeft: "20px" }}>
+          {listItems}
+        </ul>
+      );
+      continue;
     }
-  });
 
-  if (currentList) {
-    elements.push(currentList);
+    // Headers (# or **Header:**)
+    if (trimmed.startsWith("###") || trimmed.startsWith("##") || trimmed.startsWith("#")) {
+      const headerText = trimmed.replace(/^#+\s*/, "");
+      blocks.push(
+        <h4 key={`h-${i}`} style={{ margin: "12px 0 6px 0", color: "#1e293b", fontSize: "15px", fontWeight: "700" }}>
+          {renderInlineFormatting(headerText)}
+        </h4>
+      );
+      i++;
+      continue;
+    }
+
+    // Regular Paragraph
+    blocks.push(
+      <p key={`p-${i}`} style={{ margin: "4px 0 8px 0", lineHeight: "1.5" }}>
+        {renderInlineFormatting(trimmed)}
+      </p>
+    );
+    i++;
   }
 
-  return (
-    <div className="formatted-chat-content">
-      {elements.map((el, idx) => {
-        if (el.type === "ul") {
-          return (
-            <ul key={idx} style={{ margin: "6px 0 10px 0", paddingLeft: "20px" }}>
-              {el.items}
-            </ul>
-          );
-        }
-        return el;
-      })}
-    </div>
-  );
+  return <div className="formatted-chat-content">{blocks}</div>;
 }
 
 class ErrorBoundary extends Component {
