@@ -176,7 +176,7 @@ ${content.slice(0, 15000)}
 
   try {
     const completion = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
+      model: "groq/compound",
       messages: [
         {
           role: "user",
@@ -232,7 +232,7 @@ ${safeText}
 `;
 
     const completion = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
+      model: "groq/compound",
       messages: [
         {
           role: "user",
