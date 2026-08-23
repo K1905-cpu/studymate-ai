@@ -35,14 +35,40 @@ const GROQ_MODELS = [
 function stripReasoning(text) {
   if (!text) return "";
   let cleaned = typeof text === "string" ? text : safeString(text);
+
+  // 1. If response has **Reasoning** and **Answer**, extract answer directly
+  if (cleaned.includes("**Answer")) {
+    const parts = cleaned.split(/\*\*Answer.*?\*\*/i);
+    if (parts.length > 1 && parts[parts.length - 1].trim().length > 5) {
+      cleaned = parts[parts.length - 1];
+    }
+  }
+
+  // 2. Remove closed <think>...</think> blocks
   cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  // 3. Remove unclosed <think>... to end
   cleaned = cleaned.replace(/<think>[\s\S]*/gi, "");
+  // 4. Remove closed <reasoning>...</reasoning> blocks
   cleaned = cleaned.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "");
+  // 5. Remove unclosed <reasoning>... to end
   cleaned = cleaned.replace(/<reasoning>[\s\S]*/gi, "");
+  // 6. Remove standalone **Reasoning** preamble
+  cleaned = cleaned.replace(/^\*\*Reasoning\*\*[\s\S]*?(?=\n\n|\n[A-Z0-9#\*])/i, "");
+
   return cleaned.trim();
 }
 
-async function callGroqCompletion(messages, temperature = 0.1, max_tokens = 1500) {
+function cleanReplyText(text, fallback = "Here is your response based on the study materials.") {
+  let cleaned = stripReasoning(text);
+  if (!cleaned || cleaned.length < 5) {
+    let raw = typeof text === "string" ? text : safeString(text);
+    raw = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<think>/gi, "").trim();
+    cleaned = raw;
+  }
+  return cleaned || fallback;
+}
+
+async function callGroqCompletion(messages, temperature = 0.1, max_tokens = 2500) {
   let lastError = null;
   for (const model of GROQ_MODELS) {
     try {
@@ -53,7 +79,9 @@ async function callGroqCompletion(messages, temperature = 0.1, max_tokens = 1500
         max_tokens,
       });
       const content = completion.choices?.[0]?.message?.content;
-      if (content) return stripReasoning(content);
+      if (content && content.trim().length > 0) {
+        return content;
+      }
     } catch (err) {
       console.warn(`Model ${model} failed:`, err.message);
       lastError = err;
@@ -276,7 +304,7 @@ ${textContent.slice(0, 10000)}
   try {
     const rawText = await callGroqCompletion([
       { role: "user", content: prompt }
-    ], 0.1, 1500);
+    ], 0.1, 2000);
 
     const parsedNotes = extractJson(rawText);
 
@@ -311,9 +339,9 @@ ${safeText}
 
     let raw = await callGroqCompletion([
       { role: "user", content: prompt }
-    ], 0.2, 1200);
+    ], 0.2, 1500);
 
-    return stripReasoning(raw);
+    return cleanReplyText(raw);
   } catch (error) {
     console.error("Translation error details:", error);
     return `Translation failed: ${error.message || "Unknown error"}`;
@@ -446,7 +474,7 @@ Full Content / Transcript:
 ${contextText}
 
 CRITICAL FORMATTING INSTRUCTIONS:
-- Do NOT output <think> or <reasoning> tags. Return ONLY direct tutor responses.
+- Return ONLY direct tutor answers. Do NOT include reasoning preambles or <think> tags.
 - Format responses beautifully using clean Markdown:
   * Use bold text (**term**) for key terms and concepts.
   * Use bullet lists (- item) for lists, flashcards, or key points.
@@ -463,7 +491,6 @@ CRITICAL FORMATTING INSTRUCTIONS:
         (m) => m && m.role && m.content && typeof m.content === "string" && m.content.trim().length > 0
       );
 
-      // Keep only up to 6 previous history turns
       const recent = validHistory.slice(-6);
 
       let lastRole = "system";
@@ -476,15 +503,14 @@ CRITICAL FORMATTING INSTRUCTIONS:
       }
     }
 
-    // Ensure the final message appended is the current user message and role alternates cleanly
     if (messages.length > 0 && messages[messages.length - 1].role === "user") {
       messages.pop();
     }
 
     messages.push({ role: "user", content: safeString(message) });
 
-    const reply = await callGroqCompletion(messages, 0.3, 1000);
-    const cleanReply = stripReasoning(reply);
+    const rawReply = await callGroqCompletion(messages, 0.3, 2500);
+    const cleanReply = cleanReplyText(rawReply, "Here is your response based on the study materials.");
 
     res.json({
       reply: safeString(cleanReply),

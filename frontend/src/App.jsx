@@ -43,7 +43,9 @@ function renderInlineFormatting(text) {
 
 function FormattedText({ content }) {
   const clean = cleanChatText(content);
-  if (!clean) return null;
+  if (!clean) {
+    return <p style={{ margin: "4px 0 8px 0" }}>Here is your study response!</p>;
+  }
 
   const lines = clean.split("\n");
   const blocks = [];
@@ -404,9 +406,10 @@ function MainApp() {
         chatHistory: historyBeforeNewMsg,
       });
 
+      const replyContent = cleanChatText(response.data.reply) || "Here is your response based on the study materials.";
       const assistantMsg = {
         role: "assistant",
-        content: cleanChatText(response.data.reply),
+        content: replyContent,
       };
       setChatMessages([...updatedHistory, assistantMsg]);
     } catch (err) {
