@@ -27,6 +27,87 @@ function cleanChatText(val) {
   return cleaned;
 }
 
+function renderInlineFormatting(text) {
+  if (typeof text !== "string") return text;
+  const parts = text.split(/(\*\*.*?\*\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
+}
+
+function FormattedText({ content }) {
+  const clean = cleanChatText(content);
+  if (!clean) return null;
+
+  const lines = clean.split("\n");
+  const elements = [];
+  let currentList = null;
+
+  lines.forEach((line, i) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (currentList) {
+        elements.push(currentList);
+        currentList = null;
+      }
+      return;
+    }
+
+    const bulletMatch = trimmed.match(/^[-*•]\s+(.*)/) || trimmed.match(/^(\d+[\.\)])\s+(.*)/);
+
+    if (bulletMatch) {
+      const itemText = bulletMatch[2] || bulletMatch[1];
+      const parsedContent = renderInlineFormatting(itemText);
+      if (!currentList) {
+        currentList = { type: "ul", items: [] };
+      }
+      currentList.items.push(<li key={i}>{parsedContent}</li>);
+    } else {
+      if (currentList) {
+        elements.push(currentList);
+        currentList = null;
+      }
+
+      if (trimmed.startsWith("###") || trimmed.startsWith("##") || trimmed.startsWith("#")) {
+        const headerText = trimmed.replace(/^#+\s*/, "");
+        elements.push(
+          <h4 key={i} style={{ margin: "12px 0 6px 0", color: "#1e293b", fontSize: "15px", fontWeight: "700" }}>
+            {renderInlineFormatting(headerText)}
+          </h4>
+        );
+      } else {
+        elements.push(
+          <p key={i} style={{ margin: "4px 0 8px 0", lineHeight: "1.5" }}>
+            {renderInlineFormatting(trimmed)}
+          </p>
+        );
+      }
+    }
+  });
+
+  if (currentList) {
+    elements.push(currentList);
+  }
+
+  return (
+    <div className="formatted-chat-content">
+      {elements.map((el, idx) => {
+        if (el.type === "ul") {
+          return (
+            <ul key={idx} style={{ margin: "6px 0 10px 0", paddingLeft: "20px" }}>
+              {el.items}
+            </ul>
+          );
+        }
+        return el;
+      })}
+    </div>
+  );
+}
+
 class ErrorBoundary extends Component {
   constructor(props) {
     super(props);
@@ -163,7 +244,6 @@ function MainApp() {
       return;
     }
 
-    // Reset current state cleanly and replace active file
     setLoading(false);
     setCompressing(false);
     setFile(selectedFile);
@@ -555,7 +635,9 @@ ${
                     <div className="message-sender">
                       {msg.role === "user" ? "You" : "StudyMate AI"}
                     </div>
-                    <div className="message-bubble">{cleanChatText(msg.content)}</div>
+                    <div className="message-bubble">
+                      <FormattedText content={msg.content} />
+                    </div>
                   </div>
                 ))}
                 {chatLoading && (
