@@ -1,43 +1,63 @@
 import fs from "fs";
 import path from "path";
+import os from "os";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DATA_DIR = path.join(__dirname, "data");
+// In Vercel / serverless Lambdas, __dirname is read-only.
+// Use os.tmpdir() when on Vercel or if local data dir is not writable.
+const isVercel = Boolean(process.env.VERCEL);
+const DATA_DIR = isVercel
+  ? path.join(os.tmpdir(), "studymate_data")
+  : path.join(__dirname, "data");
 const DB_FILE = path.join(DATA_DIR, "studymate_db.json");
 
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-
-const defaultData = {
+// In-memory cache fallback to ensure 0 crashes if filesystem is completely locked
+let memoryDb = {
   users: [],
   sessions: [],
 };
 
+try {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+} catch (e) {
+  console.warn("Could not create data dir, using in-memory fallback:", e.message);
+}
+
 function readDb() {
   try {
     if (!fs.existsSync(DB_FILE)) {
-      fs.writeFileSync(DB_FILE, JSON.stringify(defaultData, null, 2), "utf8");
-      return defaultData;
+      try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(memoryDb, null, 2), "utf8");
+      } catch (we) {
+        // silent write error
+      }
+      return memoryDb;
     }
     const raw = fs.readFileSync(DB_FILE, "utf8");
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    memoryDb = {
+      users: Array.isArray(parsed.users) ? parsed.users : [],
+      sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
+    };
+    return memoryDb;
   } catch (err) {
-    console.error("Error reading DB file, returning fallback:", err);
-    return defaultData;
+    return memoryDb;
   }
 }
 
 function writeDb(data) {
+  memoryDb = data;
   try {
     const tmpFile = `${DB_FILE}.tmp`;
     fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), "utf8");
     fs.renameSync(tmpFile, DB_FILE);
   } catch (err) {
-    console.error("Error writing DB file:", err);
+    // In-memory state is maintained even if disk write is not permitted
   }
 }
 

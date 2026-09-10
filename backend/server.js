@@ -20,12 +20,9 @@ const pdfParse = require("pdf-parse");
 dotenv.config();
 
 const app = express();
+const router = express.Router();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || "studymate_super_secret_jwt_key_2026";
-
-// Initialize AI clients
-const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
-const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 
 const GROQ_FALLBACK_MODELS = [
   "openai/gpt-oss-120b",
@@ -42,7 +39,7 @@ const storage = multer.memoryStorage();
 const upload = multer({
   storage,
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50 MB limit
+    fileSize: 50 * 1024 * 1024,
   },
 });
 
@@ -73,7 +70,6 @@ function requireAuth(req, res, next) {
   next();
 }
 
-// Helper: safe string
 function safeString(val, fallback = "") {
   if (val === null || val === undefined) return fallback;
   if (typeof val === "string") return val;
@@ -83,7 +79,6 @@ function safeString(val, fallback = "") {
   return String(val || fallback);
 }
 
-// Helper: Clean reasoning / think tags from AI response
 function cleanAiText(raw) {
   if (!raw) return "";
   let text = typeof raw === "string" ? raw : safeString(raw);
@@ -100,7 +95,6 @@ function cleanAiText(raw) {
   return text.trim();
 }
 
-// Helper: Extract JSON from AI text
 function extractJson(text) {
   if (!text) return null;
   let cleaned = cleanAiText(text);
@@ -126,17 +120,20 @@ function extractJson(text) {
         .replace(/,\s*\]/g, "]");
       return JSON.parse(sanitized);
     } catch (e2) {
-      console.error("JSON parse error:", e2.message);
       return null;
     }
   }
 }
 
-// Multi-Tier AI Completion with Gemini 2.5 Flash as Primary
+// Multi-Tier AI Completion
 async function generateAiText(prompt, systemInstruction = "", temperature = 0.2) {
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const groqKey = process.env.GROQ_API_KEY;
+
   // 1. Try Gemini 2.5 Flash
-  if (genAI) {
+  if (geminiKey) {
     try {
+      const genAI = new GoogleGenerativeAI(geminiKey);
       const model = genAI.getGenerativeModel({
         model: "gemini-2.5-flash",
         systemInstruction: systemInstruction || undefined,
@@ -150,6 +147,7 @@ async function generateAiText(prompt, systemInstruction = "", temperature = 0.2)
     } catch (geminiError) {
       console.warn("Gemini 2.5 Flash failed, trying Gemini 1.5 Flash:", geminiError.message);
       try {
+        const genAI = new GoogleGenerativeAI(geminiKey);
         const model15 = genAI.getGenerativeModel({
           model: "gemini-1.5-flash",
           systemInstruction: systemInstruction || undefined,
@@ -161,41 +159,51 @@ async function generateAiText(prompt, systemInstruction = "", temperature = 0.2)
           return text15;
         }
       } catch (gemini15Error) {
-        console.warn("Gemini 1.5 Flash failed, falling back to Groq:", gemini15Error.message);
+        console.warn("Gemini 1.5 Flash failed, trying Groq:", gemini15Error.message);
       }
     }
   }
 
   // 2. Try Groq Models
-  if (groq) {
-    const messages = [];
-    if (systemInstruction) {
-      messages.push({ role: "system", content: systemInstruction });
-    }
-    messages.push({ role: "user", content: prompt });
-
-    for (const model of GROQ_FALLBACK_MODELS) {
-      try {
-        const completion = await groq.chat.completions.create({
-          model,
-          messages,
-          temperature,
-          max_tokens: 4000,
-        });
-        const content = completion.choices?.[0]?.message?.content;
-        if (content && content.trim().length > 0) {
-          return content;
-        }
-      } catch (groqErr) {
-        console.warn(`Groq model ${model} failed:`, groqErr.message);
+  if (groqKey) {
+    try {
+      const groq = new Groq({ apiKey: groqKey });
+      const messages = [];
+      if (systemInstruction) {
+        messages.push({ role: "system", content: systemInstruction });
       }
+      messages.push({ role: "user", content: prompt });
+
+      for (const model of GROQ_FALLBACK_MODELS) {
+        try {
+          const completion = await groq.chat.completions.create({
+            model,
+            messages,
+            temperature,
+            max_tokens: 4000,
+          });
+          const content = completion.choices?.[0]?.message?.content;
+          if (content && content.trim().length > 0) {
+            return content;
+          }
+        } catch (groqErr) {
+          console.warn(`Groq model ${model} failed:`, groqErr.message);
+        }
+      }
+    } catch (e) {
+      console.warn("Groq initialization error:", e.message);
     }
   }
 
-  throw new Error("All AI generation providers failed. Please verify your GEMINI_API_KEY or GROQ_API_KEY.");
+  if (!geminiKey && !groqKey) {
+    throw new Error(
+      "GEMINI_API_KEY is not configured in Environment Variables. Please add GEMINI_API_KEY under your Vercel Project Settings -> Environment Variables."
+    );
+  }
+
+  throw new Error("AI generation providers encountered an error. Please verify your GEMINI_API_KEY.");
 }
 
-// Document Text Extraction Handlers
 async function extractPdfText(buffer) {
   const parsed = await pdfParse(buffer);
   return parsed.text || "";
@@ -207,9 +215,11 @@ async function extractDocxText(buffer) {
 }
 
 async function transcribeMediaFile(buffer, filename) {
-  if (!groq) {
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!groqKey) {
     throw new Error("GROQ_API_KEY is required for audio/video transcription.");
   }
+  const groq = new Groq({ apiKey: groqKey });
   const ext = path.extname(filename) || ".mp3";
   const tempPath = path.join(os.tmpdir(), `${Date.now()}-${uuidv4()}${ext}`);
   try {
@@ -227,7 +237,7 @@ async function transcribeMediaFile(buffer, filename) {
       try {
         fs.unlinkSync(tempPath);
       } catch (e) {
-        // ignore cleanup error
+        // ignore
       }
     }
   }
@@ -323,10 +333,8 @@ function createStructuredFallbackNotes(content, reason = "") {
   };
 }
 
-// Comprehensive Study Notes Generator with High Context Window
 async function generateStudyNotes(content) {
   const textContent = typeof content === "string" ? content : safeString(content);
-  // Gemini 2.5 Flash has up to 1M token context! We can safely send up to 80,000 characters
   const contextSnippet = textContent.slice(0, 75000);
 
   const prompt = `
@@ -445,7 +453,6 @@ ${contextSnippet}
     if (parsed && (parsed.summary || parsed.title || parsed.keyPoints)) {
       return sanitizeNotes(parsed, textContent);
     }
-    console.warn("JSON extraction returned incomplete structure, using sanitized fallback.");
     return sanitizeNotes(null, textContent);
   } catch (error) {
     console.error("Study notes generation error:", error.message);
@@ -454,9 +461,9 @@ ${contextSnippet}
 }
 
 // ----------------------------------------------------
-// AUTH ROUTES
+// ROUTER DEFINITIONS (Mounted on /api and /)
 // ----------------------------------------------------
-app.post("/api/auth/register", async (req, res) => {
+router.post("/auth/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
     if (!email || !password || !name) {
@@ -496,7 +503,7 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
-app.post("/api/auth/login", async (req, res) => {
+router.post("/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -532,7 +539,7 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-app.get("/api/auth/me", authenticateToken, (req, res) => {
+router.get("/auth/me", authenticateToken, (req, res) => {
   if (!req.user) {
     return res.json({ user: null });
   }
@@ -552,10 +559,7 @@ app.get("/api/auth/me", authenticateToken, (req, res) => {
   });
 });
 
-// ----------------------------------------------------
-// STUDY SESSIONS / HISTORY ROUTES
-// ----------------------------------------------------
-app.get("/api/history", authenticateToken, (req, res) => {
+router.get("/history", authenticateToken, (req, res) => {
   try {
     const userId = req.user ? req.user.id : "guest";
     const sessions = db.getSessionsByUserId(userId);
@@ -566,7 +570,7 @@ app.get("/api/history", authenticateToken, (req, res) => {
   }
 });
 
-app.post("/api/history", authenticateToken, (req, res) => {
+router.post("/history", authenticateToken, (req, res) => {
   try {
     const userId = req.user ? req.user.id : (req.body.userId || "guest");
     const { title, filename, fileType, notes, transcript, quizScore } = req.body;
@@ -593,7 +597,7 @@ app.post("/api/history", authenticateToken, (req, res) => {
   }
 });
 
-app.get("/api/history/:id", authenticateToken, (req, res) => {
+router.get("/history/:id", authenticateToken, (req, res) => {
   try {
     const userId = req.user ? req.user.id : null;
     const session = db.getSessionById(req.params.id, userId);
@@ -607,7 +611,7 @@ app.get("/api/history/:id", authenticateToken, (req, res) => {
   }
 });
 
-app.delete("/api/history/:id", authenticateToken, (req, res) => {
+router.delete("/history/:id", authenticateToken, (req, res) => {
   try {
     const userId = req.user ? req.user.id : null;
     const deleted = db.deleteSession(req.params.id, userId);
@@ -621,7 +625,7 @@ app.delete("/api/history/:id", authenticateToken, (req, res) => {
   }
 });
 
-app.patch("/api/history/:id/quiz-score", authenticateToken, (req, res) => {
+router.patch("/history/:id/quiz-score", authenticateToken, (req, res) => {
   try {
     const userId = req.user ? req.user.id : null;
     const { quizScore } = req.body;
@@ -636,10 +640,8 @@ app.patch("/api/history/:id/quiz-score", authenticateToken, (req, res) => {
   }
 });
 
-// ----------------------------------------------------
-// DIRECT TEXT PROCESSING ROUTE (Zero payload limit on Vercel / serverless)
-// ----------------------------------------------------
-app.post("/api/process-text", authenticateToken, async (req, res) => {
+// Direct Text Processing Route (Zero-limit Vercel support)
+router.post("/process-text", authenticateToken, async (req, res) => {
   try {
     const { text, filename, fileType } = req.body;
     const cleanTranscript = safeString(text).trim();
@@ -650,12 +652,7 @@ app.post("/api/process-text", authenticateToken, async (req, res) => {
       });
     }
 
-    console.log(`Processing extracted text for ${filename || "uploaded_document"}, length: ${cleanTranscript.length} chars`);
-
-    // Generate Comprehensive Study Notes
     const notes = await generateStudyNotes(cleanTranscript);
-
-    // Auto-save to history
     const userId = req.user ? req.user.id : "guest";
     const name = filename || "Study Document";
     const savedSession = db.createSession({
@@ -681,10 +678,8 @@ app.post("/api/process-text", authenticateToken, async (req, res) => {
   }
 });
 
-// ----------------------------------------------------
-// FILE PROCESSING ROUTE (Supports up to 50MB, PDF, DOCX, TXT, MD, Audio/Video)
-// ----------------------------------------------------
-app.post("/api/process-file", authenticateToken, upload.single("file"), async (req, res) => {
+// Binary File Processing Route
+router.post("/process-file", authenticateToken, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: "No file was uploaded." });
@@ -694,8 +689,6 @@ app.post("/api/process-file", authenticateToken, upload.single("file"), async (r
     const ext = path.extname(originalname).toLowerCase();
     let extractedText = "";
     let detectedType = "text";
-
-    console.log(`Processing file: ${originalname}, size: ${(buffer.length / (1024 * 1024)).toFixed(2)} MB, type: ${mimetype}`);
 
     if (ext === ".pdf" || mimetype === "application/pdf") {
       detectedType = "pdf";
@@ -720,7 +713,6 @@ app.post("/api/process-file", authenticateToken, upload.single("file"), async (r
       detectedType = "audio-video";
       extractedText = await transcribeMediaFile(buffer, originalname);
     } else {
-      // Fallback attempt: try reading as text
       try {
         extractedText = buffer.toString("utf-8");
       } catch (e) {
@@ -737,10 +729,7 @@ app.post("/api/process-file", authenticateToken, upload.single("file"), async (r
       });
     }
 
-    // Generate Comprehensive Study Notes
     const notes = await generateStudyNotes(cleanTranscript);
-
-    // Auto-save to history if user is authenticated or guest
     const userId = req.user ? req.user.id : "guest";
     const savedSession = db.createSession({
       id: uuidv4(),
@@ -761,7 +750,7 @@ app.post("/api/process-file", authenticateToken, upload.single("file"), async (r
     console.error("Process file error:", error);
     if (error.code === "LIMIT_FILE_SIZE") {
       return res.status(400).json({
-        error: "File size exceeds the 50 MB upload limit. Please choose a file under 50 MB.",
+        error: "File size exceeds upload limit.",
       });
     }
     res.status(500).json({
@@ -770,10 +759,7 @@ app.post("/api/process-file", authenticateToken, upload.single("file"), async (r
   }
 });
 
-// ----------------------------------------------------
-// MULTI-LANGUAGE TRANSLATION ROUTE
-// ----------------------------------------------------
-app.post("/api/translate", async (req, res) => {
+router.post("/translate", async (req, res) => {
   try {
     const { text, language } = req.body;
     if (!text || !language) {
@@ -802,10 +788,7 @@ ${safeString(text).slice(0, 15000)}
   }
 });
 
-// ----------------------------------------------------
-// AI TUTOR CHAT ROUTE
-// ----------------------------------------------------
-app.post("/api/chat", async (req, res) => {
+router.post("/chat", async (req, res) => {
   try {
     const { message, transcript, notes, chatHistory } = req.body;
     if (!message || !safeString(message).trim()) {
@@ -843,26 +826,29 @@ Guidelines:
     res.json({ reply: cleanReply });
   } catch (error) {
     console.error("Chat error:", error);
-    res.status(500).json({ error: "Failed to generate chatbot response. Please try again." });
+    res.status(500).json({ error: error.message || "Failed to generate chatbot response. Please try again." });
   }
 });
 
-// Root & Health
-app.get("/", (req, res) => {
+router.get("/health", (req, res) => {
   res.json({
     name: "StudyMate AI API",
     status: "online",
-    version: "2.0.0",
-    maxUploadMB: 50,
-    supportedFormats: ["pdf", "docx", "txt", "md", "mp3", "wav", "m4a", "mp4", "webm"],
+    hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
+    hasGroqKey: Boolean(process.env.GROQ_API_KEY),
+    isVercel: Boolean(process.env.VERCEL),
   });
 });
+
+// Mount router on BOTH /api and /
+app.use("/api", router);
+app.use("/", router);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
   if (err && (err.type === "entity.too.large" || err.status === 413 || err.code === "LIMIT_FILE_SIZE")) {
     return res.status(400).json({
-      error: "File size exceeds the 50 MB upload limit. Please select a smaller file under 50 MB.",
+      error: "File size exceeds the limit. Please use client text extraction or select a smaller file.",
     });
   }
   if (err) {
@@ -873,12 +859,13 @@ app.use((err, req, res, next) => {
   next();
 });
 
-const server = app.listen(PORT, "0.0.0.0", () => {
-  console.log(`StudyMate AI backend running on http://localhost:${PORT}`);
-});
-
-server.on("error", (error) => {
-  console.error("Server error:", error);
-});
+if (!process.env.VERCEL) {
+  const server = app.listen(PORT, "0.0.0.0", () => {
+    console.log(`StudyMate AI backend running on http://localhost:${PORT}`);
+  });
+  server.on("error", (error) => {
+    console.error("Server error:", error);
+  });
+}
 
 export default app;
