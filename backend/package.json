@@ -9,13 +9,17 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "bcryptjs": "^3.0.3",
     "cors": "latest",
     "dotenv": "latest",
     "express": "latest",
     "groq-sdk": "^1.2.0",
+    "jsonwebtoken": "^9.0.3",
+    "mammoth": "^1.12.2",
     "multer": "latest",
     "openai": "latest",
-    "pdf-parse": "^1.1.1"
+    "pdf-parse": "^1.1.1",
+    "uuid": "^14.0.2"
   },
   "devDependencies": {
     "nodemon": "latest"

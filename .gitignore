@@ -19,6 +19,9 @@ build/
 uploads/
 **/uploads/*
 !**/uploads/.gitkeep
+backend/data/
+**/data/*
+!**/data/.gitkeep
 
 # Logs
 *.log
