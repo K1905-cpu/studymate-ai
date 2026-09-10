@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
     "axios": "^1.16.1",
     "canvas-confetti": "^1.9.4",
     "docx": "^9.7.1",
@@ -18,10 +19,7 @@
     "pdfjs-dist": "^6.3.289",
     "pdfmake": "^0.3.11",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
+    "react-dom": "^18.3.1",
     "vite": "^6.2.0"
   }
 }
