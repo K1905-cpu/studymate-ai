@@ -637,6 +637,51 @@ app.patch("/api/history/:id/quiz-score", authenticateToken, (req, res) => {
 });
 
 // ----------------------------------------------------
+// DIRECT TEXT PROCESSING ROUTE (Zero payload limit on Vercel / serverless)
+// ----------------------------------------------------
+app.post("/api/process-text", authenticateToken, async (req, res) => {
+  try {
+    const { text, filename, fileType } = req.body;
+    const cleanTranscript = safeString(text).trim();
+
+    if (!cleanTranscript || cleanTranscript.length < 15) {
+      return res.status(400).json({
+        error: "Could not extract readable text from this document. Please verify the document has readable text.",
+      });
+    }
+
+    console.log(`Processing extracted text for ${filename || "uploaded_document"}, length: ${cleanTranscript.length} chars`);
+
+    // Generate Comprehensive Study Notes
+    const notes = await generateStudyNotes(cleanTranscript);
+
+    // Auto-save to history
+    const userId = req.user ? req.user.id : "guest";
+    const name = filename || "Study Document";
+    const savedSession = db.createSession({
+      id: uuidv4(),
+      userId,
+      title: notes.title || name.replace(/\.[^/.]+$/, ""),
+      filename: name,
+      fileType: fileType || "doc",
+      notes,
+      transcript: cleanTranscript,
+    });
+
+    res.json({
+      sessionId: savedSession.id,
+      transcript: cleanTranscript,
+      notes,
+    });
+  } catch (error) {
+    console.error("Process text error:", error);
+    res.status(500).json({
+      error: error.message || "Failed to process text and generate study notes.",
+    });
+  }
+});
+
+// ----------------------------------------------------
 // FILE PROCESSING ROUTE (Supports up to 50MB, PDF, DOCX, TXT, MD, Audio/Video)
 // ----------------------------------------------------
 app.post("/api/process-file", authenticateToken, upload.single("file"), async (req, res) => {

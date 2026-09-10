@@ -4,8 +4,33 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 import { jsPDF } from "jspdf";
 import { saveAs } from "file-saver";
 import confetti from "canvas-confetti";
+import * as pdfjsLib from "pdfjs-dist";
+import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import mammoth from "mammoth";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
+
+// Client-side text extractors (Bypasses Vercel 4.5MB Serverless Payload Limits!)
+async function extractPdfTextInBrowser(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  let fullText = "";
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const textContent = await page.getTextContent();
+    const pageText = textContent.items.map((item) => item.str).join(" ");
+    fullText += `--- Page ${i} ---\n` + pageText + "\n\n";
+  }
+  return fullText;
+}
+
+async function extractDocxTextInBrowser(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const result = await mammoth.extractRawText({ arrayBuffer });
+  return result.value || "";
+}
 
 // Axios interceptor for JWT token
 axios.interceptors.request.use((config) => {
@@ -427,12 +452,47 @@ export function MainApp() {
       setMasteredCards(new Set());
       setReviewCards(new Set());
 
-      const formData = new FormData();
-      formData.append("file", file);
+      const ext = "." + file.name.split(".").pop().toLowerCase();
+      let extractedText = "";
+      let response;
 
-      const response = await axios.post(`${API_BASE_URL}/api/process-file`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      // 1. Client-Side Extraction for Documents (Bypasses Vercel 4.5MB limit completely)
+      if (ext === ".pdf") {
+        try {
+          extractedText = await extractPdfTextInBrowser(file);
+        } catch (pdfErr) {
+          console.warn("Client PDF extraction failed, falling back to server:", pdfErr);
+        }
+      } else if (ext === ".docx" || ext === ".doc") {
+        try {
+          extractedText = await extractDocxTextInBrowser(file);
+        } catch (docxErr) {
+          console.warn("Client Docx extraction failed, falling back to server:", docxErr);
+        }
+      } else if (ext === ".txt" || ext === ".md" || ext === ".csv" || ext === ".json") {
+        try {
+          extractedText = await file.text();
+        } catch (txtErr) {
+          console.warn("Client Text extraction failed:", txtErr);
+        }
+      }
+
+      if (extractedText && extractedText.trim().length >= 15) {
+        // Send lightweight text payload (<100KB) -> Never triggers 413 on Vercel
+        response = await axios.post(`${API_BASE_URL}/api/process-text`, {
+          text: extractedText,
+          filename: file.name,
+          fileType: ext.replace(".", ""),
+        });
+      } else {
+        // Fallback or Audio/Video upload
+        const formData = new FormData();
+        formData.append("file", file);
+
+        response = await axios.post(`${API_BASE_URL}/api/process-file`, formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+      }
 
       if (response.data.notes) {
         setNotes(response.data.notes);
