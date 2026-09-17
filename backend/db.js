@@ -2,7 +2,6 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
-import mongoose from "mongoose";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,53 +12,7 @@ const DATA_DIR = isVercel
   : path.join(__dirname, "data");
 const DB_FILE = path.join(DATA_DIR, "studymate_db.json");
 
-// Mongoose Schemas (used when MongoDB URI is provided)
-const UserSchema = new mongoose.Schema({
-  id: { type: String, required: true, unique: true, index: true },
-  name: { type: String, required: true },
-  email: { type: String, required: true, unique: true, index: true, lowercase: true },
-  passwordHash: { type: String, required: true },
-  createdAt: { type: Date, default: Date.now },
-  lastLoginAt: { type: Date, default: Date.now },
-});
-
-const SessionSchema = new mongoose.Schema({
-  id: { type: String, required: true, unique: true, index: true },
-  userId: { type: String, required: true, index: true },
-  title: { type: String, default: "Untitled Lecture" },
-  filename: { type: String, default: "Uploaded File" },
-  fileType: { type: String, default: "doc" },
-  notes: { type: mongoose.Schema.Types.Mixed },
-  transcript: { type: String, default: "" },
-  quizScore: { type: mongoose.Schema.Types.Mixed, default: null },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now },
-});
-
-let UserModel = null;
-let SessionModel = null;
-let isMongoConnected = false;
-
-// Attempt MongoDB connection if MONGODB_URI or MONGO_URI is set
-const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
-if (mongoUri) {
-  mongoose
-    .connect(mongoUri, {
-      serverSelectionTimeoutMS: 5000,
-    })
-    .then(() => {
-      isMongoConnected = true;
-      UserModel = mongoose.models.User || mongoose.model("User", UserSchema);
-      SessionModel = mongoose.models.Session || mongoose.model("Session", SessionSchema);
-      console.log(" Connected to MongoDB Database successfully!");
-    })
-    .catch((err) => {
-      console.warn(" MongoDB connection failed, falling back to local JSON database:", err.message);
-      isMongoConnected = false;
-    });
-}
-
-// In-memory cache fallback to ensure reliability
+// In-memory cache fallback to ensure 0 crashes anywhere
 let memoryDb = {
   users: [],
   sessions: [],
@@ -70,7 +23,7 @@ try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
 } catch (e) {
-  console.warn("Could not create data dir, using in-memory fallback:", e.message);
+  // Silent fallback to memory storage
 }
 
 function readDb() {
@@ -79,7 +32,7 @@ function readDb() {
       try {
         fs.writeFileSync(DB_FILE, JSON.stringify(memoryDb, null, 2), "utf8");
       } catch (we) {
-        // silent write error
+        // silent write error on read-only environments
       }
       return memoryDb;
     }
@@ -102,8 +55,77 @@ function writeDb(data) {
     fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), "utf8");
     fs.renameSync(tmpFile, DB_FILE);
   } catch (err) {
-    // In-memory state maintained even if disk write is blocked
+    // In-memory state is maintained even if disk write is blocked
   }
+}
+
+// MongoDB Lazy Loader
+let mongoose = null;
+let UserModel = null;
+let SessionModel = null;
+let isMongoConnected = false;
+let mongoInitAttempted = false;
+
+async function getMongoModels() {
+  const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
+  if (!mongoUri) return null;
+
+  if (isMongoConnected && UserModel && SessionModel) {
+    return { UserModel, SessionModel };
+  }
+
+  if (mongoInitAttempted && !isMongoConnected) {
+    return null;
+  }
+
+  mongoInitAttempted = true;
+  try {
+    const mod = await import("mongoose");
+    mongoose = mod.default || mod;
+
+    const UserSchema = new mongoose.Schema({
+      id: { type: String, required: true, unique: true, index: true },
+      name: { type: String, required: true },
+      email: { type: String, required: true, unique: true, index: true, lowercase: true },
+      passwordHash: { type: String, required: true },
+      createdAt: { type: Date, default: Date.now },
+      lastLoginAt: { type: Date, default: Date.now },
+    });
+
+    const SessionSchema = new mongoose.Schema({
+      id: { type: String, required: true, unique: true, index: true },
+      userId: { type: String, required: true, index: true },
+      title: { type: String, default: "Untitled Lecture" },
+      filename: { type: String, default: "Uploaded File" },
+      fileType: { type: String, default: "doc" },
+      notes: { type: mongoose.Schema.Types.Mixed },
+      transcript: { type: String, default: "" },
+      quizScore: { type: mongoose.Schema.Types.Mixed, default: null },
+      createdAt: { type: Date, default: Date.now },
+      updatedAt: { type: Date, default: Date.now },
+    });
+
+    if (mongoose.connection.readyState !== 1) {
+      await mongoose.connect(mongoUri, {
+        serverSelectionTimeoutMS: 3000,
+      });
+    }
+
+    UserModel = mongoose.models.User || mongoose.model("User", UserSchema);
+    SessionModel = mongoose.models.Session || mongoose.model("Session", SessionSchema);
+    isMongoConnected = true;
+    console.log(" Connected to MongoDB Database successfully!");
+    return { UserModel, SessionModel };
+  } catch (err) {
+    console.warn(" MongoDB connection warning (using persistent JSON storage):", err.message);
+    isMongoConnected = false;
+    return null;
+  }
+}
+
+// Background connect if Mongo URI is present
+if (process.env.MONGODB_URI || process.env.MONGO_URI) {
+  getMongoModels().catch(() => {});
 }
 
 export const db = {
@@ -113,26 +135,28 @@ export const db = {
 
   async findUserByEmail(email) {
     const normalizedEmail = (email || "").trim().toLowerCase();
-    if (isMongoConnected && UserModel) {
-      try {
-        const user = await UserModel.findOne({ email: normalizedEmail }).lean();
+    try {
+      const models = await getMongoModels();
+      if (models?.UserModel) {
+        const user = await models.UserModel.findOne({ email: normalizedEmail }).lean();
         if (user) return user;
-      } catch (err) {
-        console.warn("MongoDB findUserByEmail error:", err.message);
       }
+    } catch (err) {
+      // fallback
     }
     const data = readDb();
     return data.users.find((u) => u.email.toLowerCase() === normalizedEmail);
   },
 
   async findUserById(id) {
-    if (isMongoConnected && UserModel) {
-      try {
-        const user = await UserModel.findOne({ id }).lean();
+    try {
+      const models = await getMongoModels();
+      if (models?.UserModel) {
+        const user = await models.UserModel.findOne({ id }).lean();
         if (user) return user;
-      } catch (err) {
-        console.warn("MongoDB findUserById error:", err.message);
       }
+    } catch (err) {
+      // fallback
     }
     const data = readDb();
     return data.users.find((u) => u.id === id);
@@ -148,15 +172,15 @@ export const db = {
       lastLoginAt: new Date().toISOString(),
     };
 
-    if (isMongoConnected && UserModel) {
-      try {
-        await UserModel.create(newUser);
-      } catch (err) {
-        console.warn("MongoDB createUser error:", err.message);
+    try {
+      const models = await getMongoModels();
+      if (models?.UserModel) {
+        await models.UserModel.create(newUser);
       }
+    } catch (err) {
+      console.warn("MongoDB createUser error:", err.message);
     }
 
-    // Always persist to local JSON database for safety & offline sync
     const data = readDb();
     const existingIndex = data.users.findIndex((u) => u.email === newUser.email);
     if (existingIndex >= 0) {
@@ -171,12 +195,13 @@ export const db = {
 
   async updateUserLastLogin(id) {
     const now = new Date().toISOString();
-    if (isMongoConnected && UserModel) {
-      try {
-        await UserModel.updateOne({ id }, { $set: { lastLoginAt: now } });
-      } catch (err) {
-        console.warn("MongoDB updateUserLastLogin error:", err.message);
+    try {
+      const models = await getMongoModels();
+      if (models?.UserModel) {
+        await models.UserModel.updateOne({ id }, { $set: { lastLoginAt: now } });
       }
+    } catch (err) {
+      // fallback
     }
     const data = readDb();
     const user = data.users.find((u) => u.id === id);
@@ -187,26 +212,27 @@ export const db = {
   },
 
   async getUserCount() {
-    if (isMongoConnected && UserModel) {
-      try {
-        return await UserModel.countDocuments();
-      } catch (e) {
-        // fallback
+    try {
+      const models = await getMongoModels();
+      if (models?.UserModel) {
+        return await models.UserModel.countDocuments();
       }
+    } catch (e) {
+      // fallback
     }
     const data = readDb();
     return data.users.length;
   },
 
-  // Study Session operations
   async getSessionsByUserId(userId) {
-    if (isMongoConnected && SessionModel) {
-      try {
-        const sessions = await SessionModel.find({ userId }).sort({ createdAt: -1 }).lean();
+    try {
+      const models = await getMongoModels();
+      if (models?.SessionModel) {
+        const sessions = await models.SessionModel.find({ userId }).sort({ createdAt: -1 }).lean();
         if (sessions && sessions.length > 0) return sessions;
-      } catch (err) {
-        console.warn("MongoDB getSessionsByUserId error:", err.message);
       }
+    } catch (err) {
+      // fallback
     }
     const data = readDb();
     return data.sessions
@@ -215,14 +241,15 @@ export const db = {
   },
 
   async getSessionById(id, userId) {
-    if (isMongoConnected && SessionModel) {
-      try {
+    try {
+      const models = await getMongoModels();
+      if (models?.SessionModel) {
         const query = userId ? { id, userId } : { id };
-        const session = await SessionModel.findOne(query).lean();
+        const session = await models.SessionModel.findOne(query).lean();
         if (session) return session;
-      } catch (err) {
-        console.warn("MongoDB getSessionById error:", err.message);
       }
+    } catch (err) {
+      // fallback
     }
     const data = readDb();
     return data.sessions.find((s) => s.id === id && (!userId || s.userId === userId));
@@ -242,12 +269,13 @@ export const db = {
       updatedAt: new Date().toISOString(),
     };
 
-    if (isMongoConnected && SessionModel) {
-      try {
-        await SessionModel.create(newSession);
-      } catch (err) {
-        console.warn("MongoDB createSession error:", err.message);
+    try {
+      const models = await getMongoModels();
+      if (models?.SessionModel) {
+        await models.SessionModel.create(newSession);
       }
+    } catch (err) {
+      console.warn("MongoDB createSession error:", err.message);
     }
 
     const data = readDb();
@@ -259,13 +287,14 @@ export const db = {
 
   async updateSession(id, userId, updates) {
     const now = new Date().toISOString();
-    if (isMongoConnected && SessionModel) {
-      try {
+    try {
+      const models = await getMongoModels();
+      if (models?.SessionModel) {
         const query = userId ? { id, userId } : { id };
-        await SessionModel.updateOne(query, { $set: { ...updates, updatedAt: now } });
-      } catch (err) {
-        console.warn("MongoDB updateSession error:", err.message);
+        await models.SessionModel.updateOne(query, { $set: { ...updates, updatedAt: now } });
       }
+    } catch (err) {
+      // fallback
     }
 
     const data = readDb();
@@ -281,13 +310,14 @@ export const db = {
   },
 
   async deleteSession(id, userId) {
-    if (isMongoConnected && SessionModel) {
-      try {
+    try {
+      const models = await getMongoModels();
+      if (models?.SessionModel) {
         const query = userId ? { id, userId } : { id };
-        await SessionModel.deleteOne(query);
-      } catch (err) {
-        console.warn("MongoDB deleteSession error:", err.message);
+        await models.SessionModel.deleteOne(query);
       }
+    } catch (err) {
+      // fallback
     }
 
     const data = readDb();
