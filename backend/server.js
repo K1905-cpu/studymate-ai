@@ -130,12 +130,12 @@ async function generateAiText(prompt, systemInstruction = "", temperature = 0.2)
   const geminiKey = process.env.GEMINI_API_KEY;
   const groqKey = process.env.GROQ_API_KEY;
 
-  // 1. Try Gemini 2.5 Flash
+  // 1. Try Gemini
   if (geminiKey) {
     try {
       const genAI = new GoogleGenerativeAI(geminiKey);
       const model = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash",
+        model: "gemini-1.5-flash",
         systemInstruction: systemInstruction || undefined,
         generationConfig: { temperature },
       });
@@ -145,22 +145,7 @@ async function generateAiText(prompt, systemInstruction = "", temperature = 0.2)
         return text;
       }
     } catch (geminiError) {
-      console.warn("Gemini 2.5 Flash failed, trying Gemini 1.5 Flash:", geminiError.message);
-      try {
-        const genAI = new GoogleGenerativeAI(geminiKey);
-        const model15 = genAI.getGenerativeModel({
-          model: "gemini-1.5-flash",
-          systemInstruction: systemInstruction || undefined,
-          generationConfig: { temperature },
-        });
-        const result15 = await model15.generateContent(prompt);
-        const text15 = result15?.response?.text();
-        if (text15 && text15.trim().length > 0) {
-          return text15;
-        }
-      } catch (gemini15Error) {
-        console.warn("Gemini 1.5 Flash failed, trying Groq:", gemini15Error.message);
-      }
+      console.warn("Gemini 1.5 Flash failed, trying Groq:", geminiError.message);
     }
   }
 
@@ -470,14 +455,14 @@ router.post("/auth/register", async (req, res) => {
       return res.status(400).json({ error: "Name, email, and password are required." });
     }
 
-    const existing = db.findUserByEmail(email);
+    const existing = await db.findUserByEmail(email);
     if (existing) {
       return res.status(400).json({ error: "An account with this email already exists. Please sign in." });
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
     const userId = uuidv4();
-    const newUser = db.createUser({
+    const newUser = await db.createUser({
       id: userId,
       name: name.trim(),
       email: email.trim(),
@@ -489,7 +474,7 @@ router.post("/auth/register", async (req, res) => {
     });
 
     res.status(201).json({
-      message: "Account created successfully!",
+      message: "Account created and registered successfully in database!",
       token,
       user: {
         id: newUser.id,
@@ -499,7 +484,7 @@ router.post("/auth/register", async (req, res) => {
     });
   } catch (error) {
     console.error("Register error:", error);
-    res.status(500).json({ error: "Failed to register account." });
+    res.status(500).json({ error: "Failed to register account in database." });
   }
 });
 
@@ -510,7 +495,7 @@ router.post("/auth/login", async (req, res) => {
       return res.status(400).json({ error: "Email and password are required." });
     }
 
-    const user = db.findUserByEmail(email);
+    const user = await db.findUserByEmail(email);
     if (!user) {
       return res.status(400).json({ error: "Invalid email or password." });
     }
@@ -519,6 +504,8 @@ router.post("/auth/login", async (req, res) => {
     if (!isMatch) {
       return res.status(400).json({ error: "Invalid email or password." });
     }
+
+    await db.updateUserLastLogin(user.id);
 
     const token = jwt.sign({ id: user.id, name: user.name, email: user.email }, JWT_SECRET, {
       expiresIn: "30d",
@@ -539,15 +526,15 @@ router.post("/auth/login", async (req, res) => {
   }
 });
 
-router.get("/auth/me", authenticateToken, (req, res) => {
+router.get("/auth/me", authenticateToken, async (req, res) => {
   if (!req.user) {
     return res.json({ user: null });
   }
-  const user = db.findUserById(req.user.id);
+  const user = await db.findUserById(req.user.id);
   if (!user) {
     return res.json({ user: null });
   }
-  const sessions = db.getSessionsByUserId(user.id);
+  const sessions = await db.getSessionsByUserId(user.id);
   res.json({
     user: {
       id: user.id,
@@ -559,10 +546,10 @@ router.get("/auth/me", authenticateToken, (req, res) => {
   });
 });
 
-router.get("/history", authenticateToken, (req, res) => {
+router.get("/history", authenticateToken, async (req, res) => {
   try {
     const userId = req.user ? req.user.id : "guest";
-    const sessions = db.getSessionsByUserId(userId);
+    const sessions = await db.getSessionsByUserId(userId);
     res.json({ sessions });
   } catch (error) {
     console.error("Fetch history error:", error);
@@ -570,7 +557,7 @@ router.get("/history", authenticateToken, (req, res) => {
   }
 });
 
-router.post("/history", authenticateToken, (req, res) => {
+router.post("/history", authenticateToken, async (req, res) => {
   try {
     const userId = req.user ? req.user.id : (req.body.userId || "guest");
     const { title, filename, fileType, notes, transcript, quizScore } = req.body;
@@ -579,7 +566,7 @@ router.post("/history", authenticateToken, (req, res) => {
       return res.status(400).json({ error: "Notes data is required." });
     }
 
-    const newSession = db.createSession({
+    const newSession = await db.createSession({
       id: uuidv4(),
       userId,
       title: title || notes.title || "Untitled Lecture",
@@ -597,10 +584,10 @@ router.post("/history", authenticateToken, (req, res) => {
   }
 });
 
-router.get("/history/:id", authenticateToken, (req, res) => {
+router.get("/history/:id", authenticateToken, async (req, res) => {
   try {
     const userId = req.user ? req.user.id : null;
-    const session = db.getSessionById(req.params.id, userId);
+    const session = await db.getSessionById(req.params.id, userId);
     if (!session) {
       return res.status(404).json({ error: "Study session not found." });
     }
@@ -611,10 +598,10 @@ router.get("/history/:id", authenticateToken, (req, res) => {
   }
 });
 
-router.delete("/history/:id", authenticateToken, (req, res) => {
+router.delete("/history/:id", authenticateToken, async (req, res) => {
   try {
     const userId = req.user ? req.user.id : null;
-    const deleted = db.deleteSession(req.params.id, userId);
+    const deleted = await db.deleteSession(req.params.id, userId);
     if (!deleted) {
       return res.status(404).json({ error: "Study session not found or already deleted." });
     }
@@ -625,11 +612,11 @@ router.delete("/history/:id", authenticateToken, (req, res) => {
   }
 });
 
-router.patch("/history/:id/quiz-score", authenticateToken, (req, res) => {
+router.patch("/history/:id/quiz-score", authenticateToken, async (req, res) => {
   try {
     const userId = req.user ? req.user.id : null;
     const { quizScore } = req.body;
-    const updated = db.updateSession(req.params.id, userId, { quizScore });
+    const updated = await db.updateSession(req.params.id, userId, { quizScore });
     if (!updated) {
       return res.status(404).json({ error: "Study session not found." });
     }
@@ -655,7 +642,7 @@ router.post("/process-text", authenticateToken, async (req, res) => {
     const notes = await generateStudyNotes(cleanTranscript);
     const userId = req.user ? req.user.id : "guest";
     const name = filename || "Study Document";
-    const savedSession = db.createSession({
+    const savedSession = await db.createSession({
       id: uuidv4(),
       userId,
       title: notes.title || name.replace(/\.[^/.]+$/, ""),
@@ -731,7 +718,7 @@ router.post("/process-file", authenticateToken, upload.single("file"), async (re
 
     const notes = await generateStudyNotes(cleanTranscript);
     const userId = req.user ? req.user.id : "guest";
-    const savedSession = db.createSession({
+    const savedSession = await db.createSession({
       id: uuidv4(),
       userId,
       title: notes.title || originalname.replace(/\.[^/.]+$/, ""),
@@ -830,10 +817,13 @@ Guidelines:
   }
 });
 
-router.get("/health", (req, res) => {
+router.get("/health", async (req, res) => {
+  const registeredUsers = await db.getUserCount();
   res.json({
     name: "StudyMate AI API",
     status: "online",
+    database: db.getEngine(),
+    registeredUsers,
     hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
     hasGroqKey: Boolean(process.env.GROQ_API_KEY),
     isVercel: Boolean(process.env.VERCEL),

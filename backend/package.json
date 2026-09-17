@@ -16,6 +16,7 @@
     "groq-sdk": "^1.2.0",
     "jsonwebtoken": "^9.0.3",
     "mammoth": "^1.12.2",
+    "mongoose": "^9.10.1",
     "multer": "latest",
     "openai": "latest",
     "pdf-parse": "^1.1.1",

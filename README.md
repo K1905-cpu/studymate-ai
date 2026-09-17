@@ -6,13 +6,14 @@ StudyMate AI is an intelligent AI-powered study assistant designed to summarize 
 
 - **Document Parsing**: Upload PDFs and study notes for quick analysis.
 - **AI Summary & Q&A**: Powered by Google Gemini AI & Groq APIs.
+- **User Authentication & Database Storage**: Secure user registration (sign-up/sign-in) and session persistence backed by MongoDB or auto-provisioned JSON file database.
 - **Modern Full-Stack Architecture**: React (Vite) frontend with Express Node.js backend.
 
 ## 🛠️ Project Structure
 
 ```
 studymate-ai/
-├── backend/    # Express server, API routes, PDF parser & AI integrations
+├── backend/    # Express server, API routes, Database (db.js), PDF parser & AI integrations
 └── frontend/   # React + Vite application interface
 ```
 
@@ -29,6 +30,8 @@ npm install
 # Create a .env file with your API keys:
 # GEMINI_API_KEY=your_key
 # GROQ_API_KEY=your_key
+# MONGODB_URI=mongodb+srv://... (Optional - auto falls back to local JSON database)
+# JWT_SECRET=your_jwt_secret
 # PORT=5000
 npm run dev
 ```

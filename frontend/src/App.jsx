@@ -510,7 +510,7 @@ export function MainApp() {
         ]);
 
         fetchHistory();
-        showToast("Study notes generated with Gemini 2.5 Flash! ⚡");
+        showToast("Study notes generated successfully! ⚡");
       }
     } catch (err) {
       setError(renderSafe(err.response?.data?.error || err.message || "Failed to process file."));
@@ -1486,7 +1486,7 @@ ${
                   onClick={handleUpload}
                   disabled={loading}
                 >
-                  {loading ? "Generating Notes with Gemini 2.5 Flash... 🧠✨" : "Generate Study Materials 🚀"}
+                  {loading ? "Generating Study Materials... 🧠✨" : "Generate Study Materials 🚀"}
                 </button>
               )}
             </div>
@@ -1935,7 +1935,7 @@ ${
                     {chatLoading && (
                       <div className="chat-message assistant">
                         <div className="message-sender">StudyMate AI Tutor</div>
-                        <div className="message-bubble typing-bubble">Thinking with Gemini 2.5 Flash... 🧠✨</div>
+                        <div className="message-bubble typing-bubble">StudyMate is thinking... 🧠✨</div>
                       </div>
                     )}
                   </div>
