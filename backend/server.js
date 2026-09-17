@@ -25,9 +25,10 @@ const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || "studymate_super_secret_jwt_key_2026";
 
 const GROQ_FALLBACK_MODELS = [
-  "openai/gpt-oss-120b",
-  "qwen/qwen3.6-27b",
-  "groq/compound-mini",
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+  "mixtral-8x7b-32768",
+  "gemma2-9b-it",
 ];
 
 // Middlewares
