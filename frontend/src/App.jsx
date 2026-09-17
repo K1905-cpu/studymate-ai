@@ -52,6 +52,118 @@ async function extractDocxTextInBrowser(file) {
   return result.value || "";
 }
 
+// Convert AudioBuffer slice to 16-bit 16kHz Mono WAV Blob (< 4MB per 120s chunk)
+function audioBufferToWavBlob(audioBuffer, startOffset = 0, duration = null) {
+  const numChannels = 1;
+  const sampleRate = audioBuffer.sampleRate;
+  const startSample = Math.floor(startOffset * sampleRate);
+  const totalSamples = duration
+    ? Math.min(Math.floor(duration * sampleRate), audioBuffer.length - startSample)
+    : audioBuffer.length - startSample;
+
+  if (totalSamples <= 0) return null;
+
+  const bytesPerSample = 2; // 16-bit
+  const blockAlign = numChannels * bytesPerSample;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = totalSamples * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  function writeString(offset, string) {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  }
+
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM format
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true); // Bits per sample
+  writeString(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  const channelData0 = audioBuffer.getChannelData(0);
+  const channelData1 = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : null;
+
+  let offset = 44;
+  for (let i = 0; i < totalSamples; i++) {
+    const idx = startSample + i;
+    let sample = channelData0[idx] || 0;
+    if (channelData1) {
+      sample = (sample + (channelData1[idx] || 0)) / 2;
+    }
+    sample = Math.max(-1, Math.min(1, sample));
+    const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+    view.setInt16(offset, intSample, true);
+    offset += 2;
+  }
+
+  return new Blob([view], { type: "audio/wav" });
+}
+
+// In-Browser Audio Extraction & 16kHz Downsampler for Large Audio/Video files (Up to 50MB+)
+async function extractAndCompressAudioInBrowser(file, onProgress) {
+  if (onProgress) onProgress("Extracting & compressing audio stream in browser... 🎧");
+  const arrayBuffer = await file.arrayBuffer();
+
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) {
+    throw new Error("Web Audio API not supported in this browser.");
+  }
+  const audioCtx = new AudioCtx();
+  let decodedBuffer;
+  try {
+    decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+  } finally {
+    try {
+      audioCtx.close();
+    } catch (e) {}
+  }
+
+  const targetSampleRate = 16000;
+  const duration = decodedBuffer.duration;
+  const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(
+    1,
+    Math.ceil(duration * targetSampleRate),
+    targetSampleRate
+  );
+
+  const source = offlineCtx.createBufferSource();
+  source.buffer = decodedBuffer;
+  source.connect(offlineCtx.destination);
+  source.start(0);
+
+  const resampledBuffer = await offlineCtx.startRendering();
+
+  // Slice into chunks of max 120s (~3.8MB WAV each to safely pass under 4.5MB limits)
+  const chunkDurationSec = 120;
+  const totalChunks = Math.max(1, Math.ceil(duration / chunkDurationSec));
+  const wavChunks = [];
+
+  for (let c = 0; c < totalChunks; c++) {
+    const startOffset = c * chunkDurationSec;
+    const chunkBlob = audioBufferToWavBlob(resampledBuffer, startOffset, chunkDurationSec);
+    if (chunkBlob && chunkBlob.size > 0) {
+      wavChunks.push({
+        blob: chunkBlob,
+        chunkIndex: c,
+        totalChunks,
+        startSec: startOffset,
+      });
+    }
+  }
+
+  return { wavChunks, duration };
+}
+
 // Axios interceptor for JWT token
 axios.interceptors.request.use((config) => {
   const token = localStorage.getItem("studymate_token");
@@ -476,6 +588,8 @@ export function MainApp() {
       let extractedText = "";
       let response;
 
+      const isMedia = [".mp3", ".wav", ".m4a", ".mp4", ".mov", ".webm", ".mkv", ".ogg", ".aac"].includes(ext);
+
       // 1. Client-Side Extraction for Documents (Bypasses Vercel 4.5MB limit completely)
       if (ext === ".pdf") {
         try {
@@ -495,25 +609,51 @@ export function MainApp() {
         } catch (txtErr) {
           console.warn("Client Text extraction failed:", txtErr);
         }
+      } else if (isMedia) {
+        // 2. Client-Side Audio/Video Extraction & Chunking (< 4MB chunks for files up to 50MB+)
+        try {
+          showToast("Compressing & extracting audio stream... 🎙️");
+          const { wavChunks } = await extractAndCompressAudioInBrowser(file, (msg) => showToast(msg));
+          const chunkTranscripts = [];
+
+          for (let i = 0; i < wavChunks.length; i++) {
+            const chunk = wavChunks[i];
+            showToast(`Transcribing audio chunk (${i + 1} of ${wavChunks.length})... 🎙️`);
+            const chunkFormData = new FormData();
+            chunkFormData.append("file", chunk.blob, `chunk_${i}.wav`);
+
+            const chunkRes = await axios.post(`${API_BASE_URL}/api/transcribe-chunk`, chunkFormData, {
+              headers: { "Content-Type": "multipart/form-data" },
+            });
+            if (chunkRes.data?.text) {
+              chunkTranscripts.push(chunkRes.data.text);
+            }
+          }
+
+          extractedText = chunkTranscripts.join("\n\n").trim();
+        } catch (mediaErr) {
+          console.warn("Client audio extraction error, falling back to direct upload:", mediaErr);
+        }
       }
 
       if (extractedText && extractedText.trim().length >= 15) {
         // Send lightweight text payload (<100KB) -> Never triggers 413 on Vercel
+        showToast("Generating comprehensive study notes... 🧠✨");
         const safeText = extractedText.length > 250000 ? extractedText.slice(0, 250000) : extractedText;
         response = await axios.post(`${API_BASE_URL}/api/process-text`, {
           text: safeText,
           filename: file.name,
-          fileType: ext.replace(".", ""),
+          fileType: isMedia ? "audio-video" : ext.replace(".", ""),
         });
       } else {
-        // Serverless cloud limit guard
+        // Serverless cloud limit guard for non-extracted binary uploads
         if (file.size > 4.5 * 1024 * 1024) {
           throw new Error(
-            `File size (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 4.5 MB cloud upload limit. For large documents, please extract the text or select a smaller PDF/Word file.`
+            `File size (${(file.size / (1024 * 1024)).toFixed(1)} MB) could not be extracted directly. Please make sure the file contains clear readable text or audible speech.`
           );
         }
 
-        // Fallback or Audio/Video upload
+        // Fallback upload
         const formData = new FormData();
         formData.append("file", file);
 

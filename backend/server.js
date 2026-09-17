@@ -666,6 +666,24 @@ router.post("/process-text", authenticateToken, async (req, res) => {
   }
 });
 
+// Lightweight Audio Chunk Transcribe Route (< 4MB chunks)
+router.post("/transcribe-chunk", authenticateToken, upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "No audio chunk was uploaded." });
+    }
+    const { originalname, buffer } = req.file;
+    const transcribedText = await transcribeMediaFile(buffer, originalname || "chunk.wav");
+    const cleanText = safeString(transcribedText).trim();
+    res.json({ text: cleanText });
+  } catch (error) {
+    console.error("Transcribe chunk error:", error);
+    res.status(500).json({
+      error: error.message || "Failed to transcribe audio chunk.",
+    });
+  }
+});
+
 // Binary File Processing Route
 router.post("/process-file", authenticateToken, upload.single("file"), async (req, res) => {
   try {
