@@ -14,16 +14,36 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
 // Client-side text extractors (Bypasses Vercel 4.5MB Serverless Payload Limits!)
 async function extractPdfTextInBrowser(file) {
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  let fullText = "";
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const textContent = await page.getTextContent();
-    const pageText = textContent.items.map((item) => item.str).join(" ");
-    fullText += `--- Page ${i} ---\n` + pageText + "\n\n";
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
+    }
+    const loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(arrayBuffer),
+      useSystemFonts: true,
+      disableFontFace: true,
+    });
+    const pdf = await loadingTask.promise;
+    let fullText = "";
+    const totalPages = Math.min(pdf.numPages, 100);
+    for (let i = 1; i <= totalPages; i++) {
+      try {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map((item) => item.str).join(" ");
+        if (pageText.trim()) {
+          fullText += `--- Page ${i} ---\n` + pageText + "\n\n";
+        }
+      } catch (pageErr) {
+        console.warn(`Error reading page ${i}:`, pageErr);
+      }
+    }
+    return fullText;
+  } catch (err) {
+    console.warn("Client PDF extraction error:", err);
+    throw err;
   }
-  return fullText;
 }
 
 async function extractDocxTextInBrowser(file) {
@@ -479,12 +499,20 @@ export function MainApp() {
 
       if (extractedText && extractedText.trim().length >= 15) {
         // Send lightweight text payload (<100KB) -> Never triggers 413 on Vercel
+        const safeText = extractedText.length > 250000 ? extractedText.slice(0, 250000) : extractedText;
         response = await axios.post(`${API_BASE_URL}/api/process-text`, {
-          text: extractedText,
+          text: safeText,
           filename: file.name,
           fileType: ext.replace(".", ""),
         });
       } else {
+        // Serverless cloud limit guard
+        if (file.size > 4.5 * 1024 * 1024) {
+          throw new Error(
+            `File size (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 4.5 MB cloud upload limit. For large documents, please extract the text or select a smaller PDF/Word file.`
+          );
+        }
+
         // Fallback or Audio/Video upload
         const formData = new FormData();
         formData.append("file", file);
@@ -513,7 +541,16 @@ export function MainApp() {
         showToast("Study notes generated successfully! ⚡");
       }
     } catch (err) {
-      setError(renderSafe(err.response?.data?.error || err.message || "Failed to process file."));
+      let errorMsg = err.response?.data?.error || err.message || "Failed to process file.";
+      if (
+        err.response?.status === 413 ||
+        String(errorMsg).includes("413") ||
+        String(errorMsg).toLowerCase().includes("too large") ||
+        String(errorMsg).toLowerCase().includes("entity")
+      ) {
+        errorMsg = "File size exceeds the cloud serverless upload limit (4.5 MB). For large files, please choose a smaller PDF or document.";
+      }
+      setError(renderSafe(errorMsg));
     } finally {
       setLoading(false);
     }

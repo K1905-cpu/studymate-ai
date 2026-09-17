@@ -837,8 +837,8 @@ app.use("/", router);
 // Error handling middleware
 app.use((err, req, res, next) => {
   if (err && (err.type === "entity.too.large" || err.status === 413 || err.code === "LIMIT_FILE_SIZE")) {
-    return res.status(400).json({
-      error: "File size exceeds the limit. Please use client text extraction or select a smaller file.",
+    return res.status(413).json({
+      error: "File size exceeds the serverless limit (4.5 MB on cloud). Please use client text extraction or select a smaller file.",
     });
   }
   if (err) {
