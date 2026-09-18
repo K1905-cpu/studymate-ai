@@ -382,6 +382,8 @@ export function MainApp() {
   const [authForm, setAuthForm] = useState({ name: "", email: "", password: "" });
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
 
   // History state
   const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
@@ -513,6 +515,70 @@ export function MainApp() {
     }
   };
 
+  const calculatePasswordStrength = (pass) => {
+    if (!pass) return { score: 0, label: "", color: "#cbd5e1", width: "0%" };
+    let score = 0;
+    if (pass.length >= 6) score += 1;
+    if (pass.length >= 9) score += 1;
+    if (/[0-9]/.test(pass)) score += 1;
+    if (/[^A-Za-z0-9]/.test(pass)) score += 1;
+
+    if (score <= 1) return { score: 1, label: "Weak", color: "#ef4444", width: "25%" };
+    if (score === 2) return { score: 2, label: "Fair", color: "#f59e0b", width: "50%" };
+    if (score === 3) return { score: 3, label: "Good", color: "#3b82f6", width: "75%" };
+    return { score: 4, label: "Strong", color: "#10b981", width: "100%" };
+  };
+
+  const getInitials = (name) => {
+    if (!name || !name.trim()) return "ST";
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    return parts[0].slice(0, 2).toUpperCase();
+  };
+
+  const handleDemoSignIn = async () => {
+    setAuthError("");
+    setAuthLoading(true);
+    try {
+      try {
+        const res = await axios.post(`${API_BASE_URL}/api/auth/login`, {
+          email: "demo@studymate.ai",
+          password: "demoPassword123!",
+        });
+        if (res.data.token && res.data.user) {
+          localStorage.setItem("studymate_token", res.data.token);
+          localStorage.setItem("studymate_user", JSON.stringify(res.data.user));
+          setUser(res.data.user);
+          setShowAuthModal(false);
+          confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
+          showToast("Signed in as Demo Student! 🚀");
+          return;
+        }
+      } catch (loginErr) {
+        const regRes = await axios.post(`${API_BASE_URL}/api/auth/register`, {
+          name: "Demo Student",
+          email: "demo@studymate.ai",
+          password: "demoPassword123!",
+        });
+        if (regRes.data.token && regRes.data.user) {
+          localStorage.setItem("studymate_token", regRes.data.token);
+          localStorage.setItem("studymate_user", JSON.stringify(regRes.data.user));
+          setUser(regRes.data.user);
+          setShowAuthModal(false);
+          confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
+          showToast("Welcome Demo Student! 🚀");
+          return;
+        }
+      }
+    } catch (err) {
+      setAuthError("Could not log in to demo account.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -534,6 +600,7 @@ export function MainApp() {
         setUser(res.data.user);
         setShowAuthModal(false);
         setAuthForm({ name: "", email: "", password: "" });
+        confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
         showToast(`Welcome ${res.data.user.name || "Student"}! 🎉`);
       }
     } catch (err) {
@@ -2572,100 +2639,216 @@ ${
       {/* Auth Modal (Sign In / Register) */}
       {showAuthModal && (
         <div className="modal-overlay" onClick={() => setShowAuthModal(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{authTab === "login" ? "Student Sign In" : "Create Student Account"}</h3>
+          <div className="modal-card auth-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header auth-modal-header">
+              <div className="auth-brand-badge">
+                <span className="auth-brand-icon">🧠</span>
+                <div className="auth-brand-text">
+                  <h3>{authTab === "login" ? "Welcome Back" : "Join StudyMate AI"}</h3>
+                  <p className="auth-subtitle">
+                    {authTab === "login"
+                      ? "Access your saved study packs, quiz scores & AI tutor"
+                      : "Create your free AI-powered study space in seconds"}
+                  </p>
+                </div>
+              </div>
               <button
                 type="button"
                 className="btn-close"
                 onClick={() => setShowAuthModal(false)}
+                title="Close"
               >
                 ✕
               </button>
             </div>
 
-            <div className="auth-tab-buttons">
+            {/* Interactive Feature Perks Bar */}
+            <div className="auth-perks-bar">
+              <span className="auth-perk-item">⚡ Instant Notes</span>
+              <span className="auth-perk-item">🗂️ Flashcards</span>
+              <span className="auth-perk-item">🎯 Quiz Mode</span>
+              <span className="auth-perk-item">🎙️ Voice & Video</span>
+            </div>
+
+            {/* Dynamic Pill Switcher */}
+            <div className="auth-tab-buttons-pill">
               <button
                 type="button"
-                className={`auth-tab ${authTab === "login" ? "active" : ""}`}
+                className={`auth-tab-pill ${authTab === "login" ? "active" : ""}`}
                 onClick={() => {
                   setAuthTab("login");
                   setAuthError("");
                 }}
               >
-                Sign In
+                🔐 Sign In
               </button>
               <button
                 type="button"
-                className={`auth-tab ${authTab === "register" ? "active" : ""}`}
+                className={`auth-tab-pill ${authTab === "register" ? "active" : ""}`}
                 onClick={() => {
                   setAuthTab("register");
                   setAuthError("");
                 }}
               >
-                Create Account
+                ✨ Create Account
               </button>
             </div>
 
-            {authError && <div className="error-alert">{authError}</div>}
+            {authError && (
+              <div className="error-alert auth-error-alert">
+                <span>⚠️ {authError}</span>
+              </div>
+            )}
+
+            {/* 1-Click Fast Demo Login for instant testing */}
+            {authTab === "login" && (
+              <button
+                type="button"
+                className="btn-demo-account"
+                onClick={handleDemoSignIn}
+                disabled={authLoading}
+              >
+                <span className="demo-sparkle">⚡</span>
+                <span className="demo-text">
+                  <strong>Try 1-Click Demo Account</strong>
+                  <small>Instant access — no typing needed</small>
+                </span>
+                <span className="demo-arrow">→</span>
+              </button>
+            )}
 
             <form onSubmit={handleAuthSubmit} className="auth-form">
               {authTab === "register" && (
                 <div className="form-group">
-                  <label>Full Name</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Alex Johnson"
-                    value={authForm.name}
-                    onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })}
-                  />
+                  <div className="auth-label-row">
+                    <label>Full Name</label>
+                    {authForm.name && (
+                      <span className="auth-avatar-pill">
+                        Initial: <strong>{getInitials(authForm.name)}</strong>
+                      </span>
+                    )}
+                  </div>
+                  <div className="auth-input-wrapper">
+                    <span className="input-icon">👤</span>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Alex Johnson"
+                      value={authForm.name}
+                      onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })}
+                      autoFocus={authTab === "register"}
+                    />
+                  </div>
                 </div>
               )}
 
               <div className="form-group">
                 <label>Email Address</label>
-                <input
-                  type="email"
-                  required
-                  placeholder="student@university.edu"
-                  value={authForm.email}
-                  onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
-                />
+                <div className="auth-input-wrapper">
+                  <span className="input-icon">✉️</span>
+                  <input
+                    type="email"
+                    required
+                    placeholder="student@university.edu"
+                    value={authForm.email}
+                    onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
+                    autoFocus={authTab === "login"}
+                  />
+                </div>
               </div>
 
               <div className="form-group">
-                <label>Password</label>
-                <input
-                  type="password"
-                  required
-                  placeholder="••••••••"
-                  value={authForm.password}
-                  onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
-                />
+                <div className="auth-label-row">
+                  <label>Password</label>
+                  {authTab === "login" && (
+                    <button
+                      type="button"
+                      className="auth-link-hint"
+                      onClick={() => showToast("Password hint: Use the 1-click Demo Account above or register a new one.")}
+                    >
+                      Forgot password?
+                    </button>
+                  )}
+                </div>
+                <div className="auth-input-wrapper">
+                  <span className="input-icon">🔒</span>
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    required
+                    placeholder={authTab === "register" ? "At least 6 characters" : "••••••••"}
+                    value={authForm.password}
+                    onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowPassword(!showPassword)}
+                    title={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? "🙈" : "👁️"}
+                  </button>
+                </div>
+
+                {/* Interactive Password Strength Meter (Register Mode) */}
+                {authTab === "register" && authForm.password && (
+                  <div className="password-strength-wrap">
+                    <div className="strength-bar-track">
+                      <div
+                        className="strength-bar-fill"
+                        style={{
+                          width: calculatePasswordStrength(authForm.password).width,
+                          backgroundColor: calculatePasswordStrength(authForm.password).color,
+                        }}
+                      />
+                    </div>
+                    <span
+                      className="strength-label"
+                      style={{ color: calculatePasswordStrength(authForm.password).color }}
+                    >
+                      {calculatePasswordStrength(authForm.password).label} Password
+                    </span>
+                  </div>
+                )}
               </div>
+
+              {authTab === "login" && (
+                <div className="auth-checkbox-row">
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={rememberMe}
+                      onChange={(e) => setRememberMe(e.target.checked)}
+                    />
+                    <span>Remember me on this device</span>
+                  </label>
+                </div>
+              )}
 
               <button
                 type="submit"
-                className="btn btn-primary btn-block"
+                className="btn btn-primary btn-block auth-submit-btn"
                 disabled={authLoading}
               >
-                {authLoading
-                  ? "Processing..."
-                  : authTab === "login"
-                  ? "Sign In to StudyMate"
-                  : "Create Account"}
+                {authLoading ? (
+                  <span className="btn-spinner-content">
+                    <span className="auth-spinner" /> Authenticating...
+                  </span>
+                ) : authTab === "login" ? (
+                  "Sign In to StudyMate 🚀"
+                ) : (
+                  "Create Free Student Account ✨"
+                )}
               </button>
             </form>
 
             <div className="guest-mode-note">
-              <span>Want to try without an account? </span>
+              <span>Looking to explore first? </span>
               <button
                 type="button"
                 className="btn-link"
                 onClick={() => setShowAuthModal(false)}
               >
-                Continue in Guest Mode
+                Continue in Guest Mode →
               </button>
             </div>
           </div>
