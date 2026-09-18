@@ -127,22 +127,22 @@ function extractJson(text) {
 }
 
 // Multi-Tier AI Completion
-async function generateAiText(prompt, systemInstruction = "", temperature = 0.2) {
+async function generateAiText(prompt, systemInstruction = "", temperature = 0.2, maxTokens = 8000) {
   const geminiKey = process.env.GEMINI_API_KEY;
   const groqKey = process.env.GROQ_API_KEY;
 
-  // 1. Try Gemini
+  // 1. Try Gemini 1.5 Flash
   if (geminiKey) {
     try {
       const genAI = new GoogleGenerativeAI(geminiKey);
       const model = genAI.getGenerativeModel({
         model: "gemini-1.5-flash",
         systemInstruction: systemInstruction || undefined,
-        generationConfig: { temperature },
+        generationConfig: { temperature, maxOutputTokens: maxTokens },
       });
       const result = await model.generateContent(prompt);
       const text = result?.response?.text();
-      if (text && text.trim().length > 0) {
+      if (text && text.trim().length > 50) {
         return text;
       }
     } catch (geminiError) {
@@ -150,7 +150,7 @@ async function generateAiText(prompt, systemInstruction = "", temperature = 0.2)
     }
   }
 
-  // 2. Try Groq Models
+  // 2. Try Groq Models in order
   if (groqKey) {
     try {
       const groq = new Groq({ apiKey: groqKey });
@@ -166,10 +166,10 @@ async function generateAiText(prompt, systemInstruction = "", temperature = 0.2)
             model,
             messages,
             temperature,
-            max_tokens: 4000,
+            max_tokens: Math.min(maxTokens, 8000),
           });
           const content = completion.choices?.[0]?.message?.content;
-          if (content && content.trim().length > 0) {
+          if (content && content.trim().length > 50) {
             return content;
           }
         } catch (groqErr) {
@@ -183,11 +183,11 @@ async function generateAiText(prompt, systemInstruction = "", temperature = 0.2)
 
   if (!geminiKey && !groqKey) {
     throw new Error(
-      "GEMINI_API_KEY is not configured in Environment Variables. Please add GEMINI_API_KEY under your Vercel Project Settings -> Environment Variables."
+      "GEMINI_API_KEY is not configured. Please add GEMINI_API_KEY under your Vercel Project Settings -> Environment Variables."
     );
   }
 
-  throw new Error("AI generation providers encountered an error. Please verify your GEMINI_API_KEY.");
+  throw new Error("AI generation providers encountered an error. Please verify your API keys.");
 }
 
 async function extractPdfText(buffer) {
@@ -321,124 +321,124 @@ function createStructuredFallbackNotes(content, reason = "") {
 
 async function generateStudyNotes(content) {
   const textContent = typeof content === "string" ? content : safeString(content);
-  const contextSnippet = textContent.slice(0, 75000);
+  // Use up to 80k chars to give the AI more context
+  const contextSnippet = textContent.slice(0, 80000);
 
-  const prompt = `
-You are an elite academic professor and master tutor. Analyze the following study material/lecture transcript thoroughly and generate an exceptionally comprehensive, high-yield study package.
+  const systemInstruction = `You are an expert AI academic tutor and study note generator. 
+You MUST analyze the EXACT transcript/document provided and generate study materials DIRECTLY based on its ACTUAL content.
+NEVER use placeholder text like "Key takeaway point 1" or "Clear concept-testing question" — always use REAL content from the provided material.
+Always respond with VALID JSON only. No markdown, no explanation, no extra text outside the JSON object.`;
 
-Return JSON ONLY. Do NOT wrap in markdown explanation or add text outside the JSON.
+  const prompt = `Analyze the following lecture/document transcript thoroughly and generate a comprehensive, high-quality study package.
 
-Expected JSON Structure:
+CRITICAL RULES:
+- Read the ENTIRE transcript carefully before generating any output
+- Every field must contain REAL content derived from the actual transcript — no generic placeholders
+- The summary must be 3-5 detailed paragraphs explaining the main concepts taught
+- keyPoints must be 6-10 specific insights or facts from the material
+- glossary must define real terms, concepts, or formulas mentioned in the transcript
+- flashcards must test real concepts from the transcript with specific Q&A
+- quiz must have 5+ multiple-choice questions about real content in the transcript
+- All quiz answers must be real options — not just "A. ..."
+
+Return ONLY this JSON structure (no markdown, no code fences, no extra text):
 {
-  "title": "Clear, engaging and descriptive academic title for this lecture/document",
-  "subject": "Main academic subject / field (e.g., Computer Science, Biology, Economics, History)",
-  "summary": "Detailed, multi-paragraph markdown summary highlighting major themes, background, core explanations, and real-world relevance.",
+  "title": "Specific descriptive title based on the lecture content",
+  "subject": "Academic subject/field (e.g., Linear Algebra, Biology, Computer Science)",
+  "summary": "3-5 paragraph detailed summary of the ACTUAL lecture content, covering main themes, key explanations, and takeaways.",
   "keyPoints": [
-    "Key takeaway point 1 with concise explanation",
-    "Key takeaway point 2 with concise explanation",
-    "Key takeaway point 3 with concise explanation",
-    "Key takeaway point 4 with concise explanation",
-    "Key takeaway point 5 with concise explanation",
-    "Key takeaway point 6 with concise explanation"
+    "Specific point 1 from the actual material",
+    "Specific point 2 from the actual material",
+    "Specific point 3 from the actual material",
+    "Specific point 4 from the actual material",
+    "Specific point 5 from the actual material",
+    "Specific point 6 from the actual material"
   ],
   "actionItems": [
-    "Practical study step / exercise / homework recommendation 1",
-    "Practical study step / exercise / homework recommendation 2",
-    "Practical study step / exercise / homework recommendation 3",
-    "Practical study step / exercise / homework recommendation 4"
+    "Specific study action based on this lecture",
+    "Specific practice recommendation based on this content",
+    "Specific review or exercise tied to topics in this material",
+    "Further reading or practice suggestion"
   ],
   "glossary": [
-    {
-      "term": "Key Term / Formula 1",
-      "definition": "Clear, accurate definition with context."
-    },
-    {
-      "term": "Key Term / Formula 2",
-      "definition": "Clear, accurate definition with context."
-    },
-    {
-      "term": "Key Term / Formula 3",
-      "definition": "Clear, accurate definition with context."
-    },
-    {
-      "term": "Key Term / Formula 4",
-      "definition": "Clear, accurate definition with context."
-    }
+    {"term": "Real term from transcript", "definition": "Accurate definition as used in this lecture"},
+    {"term": "Real term from transcript", "definition": "Accurate definition as used in this lecture"},
+    {"term": "Real term from transcript", "definition": "Accurate definition as used in this lecture"},
+    {"term": "Real term from transcript", "definition": "Accurate definition as used in this lecture"},
+    {"term": "Real term from transcript", "definition": "Accurate definition as used in this lecture"}
   ],
   "flashcards": [
-    {
-      "question": "Clear concept-testing question 1?",
-      "answer": "Accurate, succinct explanation."
-    },
-    {
-      "question": "Clear concept-testing question 2?",
-      "answer": "Accurate, succinct explanation."
-    },
-    {
-      "question": "Clear concept-testing question 3?",
-      "answer": "Accurate, succinct explanation."
-    },
-    {
-      "question": "Clear concept-testing question 4?",
-      "answer": "Accurate, succinct explanation."
-    },
-    {
-      "question": "Clear concept-testing question 5?",
-      "answer": "Accurate, succinct explanation."
-    },
-    {
-      "question": "Clear concept-testing question 6?",
-      "answer": "Accurate, succinct explanation."
-    }
+    {"question": "Specific question about real concept from this lecture?", "answer": "Specific accurate answer based on the lecture content."},
+    {"question": "Specific question about real concept from this lecture?", "answer": "Specific accurate answer based on the lecture content."},
+    {"question": "Specific question about real concept from this lecture?", "answer": "Specific accurate answer based on the lecture content."},
+    {"question": "Specific question about real concept from this lecture?", "answer": "Specific accurate answer based on the lecture content."},
+    {"question": "Specific question about real concept from this lecture?", "answer": "Specific accurate answer based on the lecture content."},
+    {"question": "Specific question about real concept from this lecture?", "answer": "Specific accurate answer based on the lecture content."}
   ],
   "quiz": [
     {
-      "question": "Multiple choice test question 1?",
-      "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
-      "answer": "A. ...",
-      "explanation": "Why this answer is correct and why other options are incorrect."
+      "question": "Real multiple-choice question about this lecture's content?",
+      "options": ["A. Real option", "B. Real option", "C. Real option", "D. Real option"],
+      "answer": "A. The correct real option",
+      "explanation": "Why this is correct based on what the lecture taught."
     },
     {
-      "question": "Multiple choice test question 2?",
-      "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
-      "answer": "B. ...",
-      "explanation": "Why this answer is correct."
+      "question": "Real multiple-choice question about this lecture's content?",
+      "options": ["A. Real option", "B. Real option", "C. Real option", "D. Real option"],
+      "answer": "B. The correct real option",
+      "explanation": "Why this is correct based on what the lecture taught."
     },
     {
-      "question": "Multiple choice test question 3?",
-      "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
-      "answer": "C. ...",
-      "explanation": "Why this answer is correct."
+      "question": "Real multiple-choice question about this lecture's content?",
+      "options": ["A. Real option", "B. Real option", "C. Real option", "D. Real option"],
+      "answer": "C. The correct real option",
+      "explanation": "Why this is correct based on what the lecture taught."
     },
     {
-      "question": "Multiple choice test question 4?",
-      "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
-      "answer": "D. ...",
-      "explanation": "Why this answer is correct."
+      "question": "Real multiple-choice question about this lecture's content?",
+      "options": ["A. Real option", "B. Real option", "C. Real option", "D. Real option"],
+      "answer": "D. The correct real option",
+      "explanation": "Why this is correct based on what the lecture taught."
     },
     {
-      "question": "Multiple choice test question 5?",
-      "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
-      "answer": "A. ...",
-      "explanation": "Why this answer is correct."
+      "question": "Real multiple-choice question about this lecture's content?",
+      "options": ["A. Real option", "B. Real option", "C. Real option", "D. Real option"],
+      "answer": "A. The correct real option",
+      "explanation": "Why this is correct based on what the lecture taught."
     }
   ]
 }
 
-Study Material:
-${contextSnippet}
-`;
+TRANSCRIPT / STUDY MATERIAL:
+${contextSnippet}`;
 
   try {
     const rawAiResponse = await generateAiText(
       prompt,
-      "You are an expert AI academic tutor. Always return valid, well-structured JSON study packages."
+      systemInstruction,
+      0.3,
+      8000
     );
 
     const parsed = extractJson(rawAiResponse);
-    if (parsed && (parsed.summary || parsed.title || parsed.keyPoints)) {
+    if (parsed && parsed.title && parsed.summary && parsed.summary.length > 100) {
       return sanitizeNotes(parsed, textContent);
     }
+    // If we got a response but JSON parsing failed, try to generate once more with a simpler prompt
+    console.warn("First attempt JSON parse failed, retrying with simpler prompt...");
+    const retryPrompt = `You are a study notes generator. Read this transcript and return a JSON object with these exact keys: title, subject, summary, keyPoints (array of strings), actionItems (array of strings), glossary (array of {term, definition}), flashcards (array of {question, answer}), quiz (array of {question, options, answer, explanation}).
+
+RULE: Only return the JSON object. No markdown. No extra text. Base everything on the ACTUAL content below.
+
+TRANSCRIPT:
+${contextSnippet.slice(0, 40000)}`;
+
+    const retryResponse = await generateAiText(retryPrompt, "Return valid JSON only.", 0.2, 6000);
+    const retryParsed = extractJson(retryResponse);
+    if (retryParsed && (retryParsed.summary || retryParsed.keyPoints)) {
+      return sanitizeNotes(retryParsed, textContent);
+    }
+
     return sanitizeNotes(null, textContent);
   } catch (error) {
     console.error("Study notes generation error:", error.message);
