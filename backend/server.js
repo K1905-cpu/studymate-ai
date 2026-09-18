@@ -24,12 +24,21 @@ const router = express.Router();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || "studymate_super_secret_jwt_key_2026";
 
-const GROQ_FALLBACK_MODELS = [
-  "llama-3.3-70b-versatile",
-  "llama-3.1-8b-instant",
-  "mixtral-8x7b-32768",
-  "gemma2-9b-it",
+const GEMINI_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.5-flash",
+  "gemini-flash-latest",
+  "gemini-3-flash-preview",
 ];
+
+const GROQ_FALLBACK_MODELS = [
+  "qwen/qwen3.8-27b",
+  "openai/gpt-oss-120b",
+  "openai/gpt-oss-20b",
+  "groq/compound-mini",
+];
+
 
 // Middlewares
 app.use(cors());
@@ -100,53 +109,80 @@ function extractJson(text) {
   if (!text) return null;
   let cleaned = cleanAiText(text);
 
+  // Strip markdown code fences
   const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  if (jsonMatch && jsonMatch[1]) {
-    cleaned = jsonMatch[1].trim();
-  }
+  if (jsonMatch && jsonMatch[1]) cleaned = jsonMatch[1].trim();
 
+  // Find first { ... last }
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
   if (start !== -1 && end !== -1 && end > start) {
     cleaned = cleaned.slice(start, end + 1);
   }
 
+  // Attempt 1: direct parse
+  try { return JSON.parse(cleaned); } catch (_) {}
+
+  // Attempt 2: sanitize control characters + trailing commas
   try {
-    return JSON.parse(cleaned);
-  } catch (e) {
-    try {
-      const sanitized = cleaned
-        .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ")
-        .replace(/,\s*}/g, "}")
-        .replace(/,\s*\]/g, "]");
-      return JSON.parse(sanitized);
-    } catch (e2) {
-      return null;
+    const s = cleaned
+      .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ")
+      .replace(/,\s*}/g, "}")
+      .replace(/,\s*\]/g, "]")
+      .replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":');
+    return JSON.parse(s);
+  } catch (_) {}
+
+  // Attempt 3: repair truncated JSON by closing open brackets
+  try {
+    let repaired = cleaned.replace(/[\u0000-\u001F\u007F-\u009F]/g, " ");
+    // Count open braces/brackets
+    let openBraces = 0, openBrackets = 0, inString = false, escape = false;
+    for (let i = 0; i < repaired.length; i++) {
+      const c = repaired[i];
+      if (escape) { escape = false; continue; }
+      if (c === '\\') { escape = true; continue; }
+      if (c === '"') { inString = !inString; continue; }
+      if (!inString) {
+        if (c === '{') openBraces++;
+        else if (c === '}') openBraces--;
+        else if (c === '[') openBrackets++;
+        else if (c === ']') openBrackets--;
+      }
     }
-  }
+    // Remove trailing comma before appending closers
+    repaired = repaired.replace(/,\s*$/, "");
+    while (openBrackets > 0) { repaired += "]"; openBrackets--; }
+    while (openBraces > 0) { repaired += "}"; openBraces--; }
+    return JSON.parse(repaired);
+  } catch (_) {}
+
+  return null;
 }
 
-// Multi-Tier AI Completion
+// Multi-Tier AI Completion with Gemini 2.5 and Groq
 async function generateAiText(prompt, systemInstruction = "", temperature = 0.2, maxTokens = 8000) {
   const geminiKey = process.env.GEMINI_API_KEY;
   const groqKey = process.env.GROQ_API_KEY;
 
-  // 1. Try Gemini 1.5 Flash
+  // 1. Try Gemini Models
   if (geminiKey) {
-    try {
-      const genAI = new GoogleGenerativeAI(geminiKey);
-      const model = genAI.getGenerativeModel({
-        model: "gemini-1.5-flash",
-        systemInstruction: systemInstruction || undefined,
-        generationConfig: { temperature, maxOutputTokens: maxTokens },
-      });
-      const result = await model.generateContent(prompt);
-      const text = result?.response?.text();
-      if (text && text.trim().length > 50) {
-        return text;
+    for (const modelName of GEMINI_MODELS) {
+      try {
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          systemInstruction: systemInstruction || undefined,
+          generationConfig: { temperature, maxOutputTokens: maxTokens },
+        });
+        const result = await model.generateContent(prompt);
+        const text = result?.response?.text();
+        if (text && text.trim().length > 10) {
+          return text;
+        }
+      } catch (geminiError) {
+        console.warn(`Gemini model ${modelName} failed, trying next:`, geminiError.message);
       }
-    } catch (geminiError) {
-      console.warn("Gemini 1.5 Flash failed, trying Groq:", geminiError.message);
     }
   }
 
@@ -169,7 +205,7 @@ async function generateAiText(prompt, systemInstruction = "", temperature = 0.2,
             max_tokens: Math.min(maxTokens, 8000),
           });
           const content = completion.choices?.[0]?.message?.content;
-          if (content && content.trim().length > 50) {
+          if (content && content.trim().length > 10) {
             return content;
           }
         } catch (groqErr) {
@@ -183,7 +219,7 @@ async function generateAiText(prompt, systemInstruction = "", temperature = 0.2,
 
   if (!geminiKey && !groqKey) {
     throw new Error(
-      "GEMINI_API_KEY is not configured. Please add GEMINI_API_KEY under your Vercel Project Settings -> Environment Variables."
+      "GEMINI_API_KEY is not configured. Please add GEMINI_API_KEY under your environment variables."
     );
   }
 
@@ -191,42 +227,153 @@ async function generateAiText(prompt, systemInstruction = "", temperature = 0.2,
 }
 
 async function extractPdfText(buffer) {
-  const parsed = await pdfParse(buffer);
-  return parsed.text || "";
+  try {
+    const parsed = await pdfParse(buffer);
+    if (parsed && parsed.text && parsed.text.trim().length >= 25) {
+      return parsed.text;
+    }
+  } catch (pdfErr) {
+    console.warn("pdfParse failed, trying Gemini native PDF OCR:", pdfErr.message);
+  }
+
+  // Fallback to Gemini 2.5 Flash multimodal PDF vision/OCR (ideal for scanned PDFs)
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (geminiKey) {
+    try {
+      const genAI = new GoogleGenerativeAI(geminiKey);
+      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+      const res = await model.generateContent([
+        {
+          inlineData: {
+            mimeType: "application/pdf",
+            data: buffer.toString("base64"),
+          },
+        },
+        "Extract all readable text, titles, headings, formulas, and content from this document verbatim and thoroughly. Return all textual content accurately."
+      ]);
+      const ocrText = res?.response?.text();
+      if (ocrText && ocrText.trim().length >= 15) {
+        return ocrText.trim();
+      }
+    } catch (geminiErr) {
+      console.warn("Gemini PDF OCR fallback error:", geminiErr.message);
+    }
+  }
+  return "";
 }
 
 async function extractDocxText(buffer) {
-  const result = await mammoth.extractRawText({ buffer });
-  return result.value || "";
+  try {
+    const result = await mammoth.extractRawText({ buffer });
+    return result.value || "";
+  } catch (e) {
+    console.warn("mammoth extraction failed:", e.message);
+    return "";
+  }
 }
 
-async function transcribeMediaFile(buffer, filename) {
-  const groqKey = process.env.GROQ_API_KEY;
-  if (!groqKey) {
-    throw new Error("GROQ_API_KEY is required for audio/video transcription.");
+async function extractImageText(buffer, mimetype = "image/jpeg") {
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (geminiKey) {
+    try {
+      const genAI = new GoogleGenerativeAI(geminiKey);
+      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+      const res = await model.generateContent([
+        {
+          inlineData: {
+            mimeType: mimetype || "image/jpeg",
+            data: buffer.toString("base64"),
+          },
+        },
+        "Transcribe and extract all textual content, notes, handwritten text, headings, formulas, and lecture points from this image verbatim and thoroughly. Provide complete text transcription."
+      ]);
+      const imgText = res?.response?.text();
+      if (imgText && imgText.trim().length >= 10) {
+        return imgText.trim();
+      }
+    } catch (err) {
+      console.warn("Gemini Image Vision OCR failed:", err.message);
+    }
   }
-  const groq = new Groq({ apiKey: groqKey });
-  const ext = path.extname(filename) || ".mp3";
-  const tempPath = path.join(os.tmpdir(), `${Date.now()}-${uuidv4()}${ext}`);
-  try {
-    fs.writeFileSync(tempPath, buffer);
-    const transcription = await groq.audio.transcriptions.create({
-      file: fs.createReadStream(tempPath),
-      model: "whisper-large-v3",
-      response_format: "text",
-    });
-    if (typeof transcription === "string") return transcription;
-    if (transcription && typeof transcription.text === "string") return transcription.text;
-    return String(transcription?.message || JSON.stringify(transcription) || "");
-  } finally {
-    if (fs.existsSync(tempPath)) {
-      try {
-        fs.unlinkSync(tempPath);
-      } catch (e) {
-        // ignore
+  return "";
+}
+
+async function transcribeMediaFile(buffer, filename, mimetype = "audio/wav") {
+  const groqKey = process.env.GROQ_API_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const ext = path.extname(filename || "").toLowerCase() || ".wav";
+
+  // 1. Try Groq Whisper (Whisper Large V3 and Turbo)
+  if (groqKey) {
+    const tempPath = path.join(os.tmpdir(), `${Date.now()}-${uuidv4()}${ext}`);
+    try {
+      fs.writeFileSync(tempPath, buffer);
+      const groq = new Groq({ apiKey: groqKey });
+      for (const whisperModel of ["whisper-large-v3", "whisper-large-v3-turbo"]) {
+        try {
+          const transcription = await groq.audio.transcriptions.create({
+            file: fs.createReadStream(tempPath),
+            model: whisperModel,
+            response_format: "text",
+          });
+          const text = typeof transcription === "string" ? transcription : transcription?.text;
+          if (text && text.trim().length > 0) {
+            return text.trim();
+          }
+        } catch (wErr) {
+          console.warn(`Groq ${whisperModel} transcription failed:`, wErr.message);
+        }
+      }
+    } catch (err) {
+      console.warn("Groq transcription setup error:", err.message);
+    } finally {
+      if (fs.existsSync(tempPath)) {
+        try {
+          fs.unlinkSync(tempPath);
+        } catch (_) {}
       }
     }
   }
+
+  // 2. Multimodal Fallback via Gemini 2.5 Flash
+  if (geminiKey) {
+    try {
+      let mediaMime = mimetype;
+      if (!mediaMime || mediaMime === "application/octet-stream") {
+        if (ext === ".mp3") mediaMime = "audio/mp3";
+        else if (ext === ".wav") mediaMime = "audio/wav";
+        else if (ext === ".m4a") mediaMime = "audio/m4a";
+        else if (ext === ".aac") mediaMime = "audio/aac";
+        else if (ext === ".ogg") mediaMime = "audio/ogg";
+        else if (ext === ".flac") mediaMime = "audio/flac";
+        else if (ext === ".mp4") mediaMime = "video/mp4";
+        else if (ext === ".mov") mediaMime = "video/quicktime";
+        else if (ext === ".webm") mediaMime = "video/webm";
+        else if (ext === ".mkv") mediaMime = "video/x-matroska";
+        else mediaMime = "audio/wav";
+      }
+
+      const genAI = new GoogleGenerativeAI(geminiKey);
+      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+      const res = await model.generateContent([
+        {
+          inlineData: {
+            mimeType: mediaMime,
+            data: buffer.toString("base64"),
+          },
+        },
+        "Transcribe all speech and spoken audio from this media file accurately, thoroughly, and verbatim. Return only the transcript."
+      ]);
+      const geminiTranscript = res?.response?.text();
+      if (geminiTranscript && geminiTranscript.trim().length > 0) {
+        return geminiTranscript.trim();
+      }
+    } catch (geminiErr) {
+      console.warn("Gemini multimodal audio/video transcription fallback failed:", geminiErr.message);
+    }
+  }
+
+  throw new Error("Unable to transcribe media file. Please ensure clear audio/video and valid API keys.");
 }
 
 function sanitizeNotes(notes, fallbackContent = "") {
@@ -268,182 +415,228 @@ function sanitizeNotes(notes, fallbackContent = "") {
   };
 }
 
-function createStructuredFallbackNotes(content, reason = "") {
-  const contentStr = typeof content === "string" ? content : safeString(content);
-  const snippet = contentStr.slice(0, 1200);
+// Smart content extractor: builds real notes from raw transcript when AI fails
+function buildNotesFromTranscript(text) {
+  const words = text.split(/\s+/).filter(Boolean);
+  const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+
+  // Extract title hint from first meaningful sentence
+  const firstSentence = sentences.find(s => s.trim().length > 20) || "Lecture Transcript";
+  const title = firstSentence.trim().slice(0, 80).replace(/[\r\n]+/g, " ");
+
+  // Build summary from first ~600 words
+  const summaryWords = words.slice(0, 600).join(" ");
+
+  // Pick key sentences (every ~30th sentence up to 8)
+  const keyPoints = [];
+  const step = Math.max(1, Math.floor(sentences.length / 8));
+  for (let i = 0; i < sentences.length && keyPoints.length < 8; i += step) {
+    const s = sentences[i].trim().replace(/[\r\n]+/g, " ");
+    if (s.length > 30 && s.length < 300) keyPoints.push(s);
+  }
+
+  // Extract possible terms (capitalized words / phrases)
+  const termSet = new Set();
+  const capPattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})\b/g;
+  let m;
+  while ((m = capPattern.exec(text)) !== null && termSet.size < 8) {
+    const t = m[1].trim();
+    if (t.length > 3 && !/^(The|This|That|And|For|With|From|They|When|What|Where|How|But)$/.test(t)) {
+      termSet.add(t);
+    }
+  }
+  const glossary = [...termSet].slice(0, 6).map(term => ({
+    term,
+    definition: `A key concept discussed in this lecture. Refer to the transcript for detailed explanation.`,
+  }));
+
+  // Build flashcards from Q-sentences in transcript or key points
+  const flashcards = keyPoints.slice(0, 6).map((kp, i) => ({
+    question: `What is explained by: "${kp.slice(0, 80)}..."?`,
+    answer: kp,
+  }));
+
+  // Build quiz from key points
+  const quiz = keyPoints.slice(0, 5).map((kp, i) => {
+    const answer = kp.slice(0, 60);
+    return {
+      question: `Which statement best reflects the lecture content related to: "${kp.slice(0, 50)}..."?`,
+      options: [
+        `A. ${answer}`,
+        `B. This concept is not discussed in the lecture`,
+        `C. The lecture takes the opposite position`,
+        `D. This is a trick question`,
+      ],
+      answer: `A. ${answer}`,
+      explanation: `This is directly stated or implied in the lecture transcript.`,
+    };
+  });
 
   return {
-    title: "Study Material Notes",
-    subject: "Uploaded Content",
-    summary: snippet || "Here is the summary of your processed document.",
-    keyPoints: [
-      "Key topics were successfully extracted from the uploaded document.",
-      "Review the key definitions and formulas highlighted in your study session.",
-      "Use the interactive AI chatbot below to ask specific in-depth questions.",
-    ],
+    title: `Lecture Notes: ${title}`,
+    subject: "Lecture / Study Material",
+    summary: summaryWords,
+    keyPoints: keyPoints.length > 0 ? keyPoints : ["Review the transcript above for key content."],
     actionItems: [
-      "Review the summary and flashcards.",
-      "Test your understanding with the quiz questions.",
-      "Ask the AI tutor for clarification on difficult topics.",
+      "Re-read the full transcript and highlight key terms.",
+      "Test yourself using the flashcards below.",
+      "Use the AI tutor chatbot to ask follow-up questions.",
+      "Make your own notes from the summary above.",
     ],
-    glossary: [
+    glossary: glossary.length > 0 ? glossary : [{ term: "Lecture Content", definition: "See the transcript summary above." }],
+    flashcards: flashcards.length > 0 ? flashcards : [{ question: "What is the main topic?", answer: title }],
+    quiz: quiz.length > 0 ? quiz : [
       {
-        term: "Lecture Overview",
-        definition: "The core foundational knowledge presented in this study material.",
+        question: "What is the best way to retain this lecture content?",
+        options: ["A. Active recall and practice", "B. Passive reading", "C. Skip review", "D. Memorize only"],
+        answer: "A. Active recall and practice",
+        explanation: "Active recall improves long-term memory retention.",
       },
     ],
-    flashcards: [
-      {
-        question: "What is the primary topic of this study material?",
-        answer: "The uploaded lecture content covers core principles and key takeaways.",
-      },
-      {
-        question: "How can you reinforce this learning?",
-        answer: "By reviewing flashcards, completing quizzes, and asking the AI tutor questions.",
-      },
-    ],
-    quiz: [
-      {
-        question: "What is the best way to retain information from this document?",
-        options: [
-          "Active recall with flashcards and quizzes",
-          "Passive reading once",
-          "Ignoring difficult concepts",
-          "Skipping summaries",
-        ],
-        answer: "Active recall with flashcards and quizzes",
-        explanation: "Active recall and practice testing significantly boost long-term memory retention.",
-      },
-    ],
-    reason: reason || undefined,
   };
 }
 
 async function generateStudyNotes(content) {
   const textContent = typeof content === "string" ? content : safeString(content);
-  // Use up to 80k chars to give the AI more context
-  const contextSnippet = textContent.slice(0, 80000);
+  if (!textContent || textContent.trim().length < 15) {
+    return buildNotesFromTranscript("No readable content provided.");
+  }
 
-  const systemInstruction = `You are an expert AI academic tutor and study note generator. 
-You MUST analyze the EXACT transcript/document provided and generate study materials DIRECTLY based on its ACTUAL content.
-NEVER use placeholder text like "Key takeaway point 1" or "Clear concept-testing question" — always use REAL content from the provided material.
-Always respond with VALID JSON only. No markdown, no explanation, no extra text outside the JSON object.`;
+  // Use first 60k chars - enough for a full lecture or multi-page paper
+  const ctx = textContent.slice(0, 60000);
 
-  const prompt = `Analyze the following lecture/document transcript thoroughly and generate a comprehensive, high-quality study package.
+  // Strategy 1: Gemini with structured JSON mode
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (geminiKey) {
+    const genAI = new GoogleGenerativeAI(geminiKey);
+    const geminiPrompt = `You are an expert academic tutor. Read the study material below and produce a complete, highly structured study notes package in valid JSON format.
 
-CRITICAL RULES:
-- Read the ENTIRE transcript carefully before generating any output
-- Every field must contain REAL content derived from the actual transcript — no generic placeholders
-- The summary must be 3-5 detailed paragraphs explaining the main concepts taught
-- keyPoints must be 6-10 specific insights or facts from the material
-- glossary must define real terms, concepts, or formulas mentioned in the transcript
-- flashcards must test real concepts from the transcript with specific Q&A
-- quiz must have 5+ multiple-choice questions about real content in the transcript
-- All quiz answers must be real options — not just "A. ..."
-
-Return ONLY this JSON structure (no markdown, no code fences, no extra text):
+Required JSON Structure:
 {
-  "title": "Specific descriptive title based on the lecture content",
-  "subject": "Academic subject/field (e.g., Linear Algebra, Biology, Computer Science)",
-  "summary": "3-5 paragraph detailed summary of the ACTUAL lecture content, covering main themes, key explanations, and takeaways.",
+  "title": "Clear, descriptive title based on actual content",
+  "subject": "Academic subject (e.g. Computer Science, Biology, Economics)",
+  "summary": "Detailed 4-6 paragraph comprehensive summary thoroughly explaining core concepts, context, and key conclusions.",
   "keyPoints": [
-    "Specific point 1 from the actual material",
-    "Specific point 2 from the actual material",
-    "Specific point 3 from the actual material",
-    "Specific point 4 from the actual material",
-    "Specific point 5 from the actual material",
-    "Specific point 6 from the actual material"
+    "6 to 8 deep, insightful key takeaways from the content"
   ],
   "actionItems": [
-    "Specific study action based on this lecture",
-    "Specific practice recommendation based on this content",
-    "Specific review or exercise tied to topics in this material",
-    "Further reading or practice suggestion"
+    "4 to 5 specific actionable study, practice, or revision steps"
   ],
   "glossary": [
-    {"term": "Real term from transcript", "definition": "Accurate definition as used in this lecture"},
-    {"term": "Real term from transcript", "definition": "Accurate definition as used in this lecture"},
-    {"term": "Real term from transcript", "definition": "Accurate definition as used in this lecture"},
-    {"term": "Real term from transcript", "definition": "Accurate definition as used in this lecture"},
-    {"term": "Real term from transcript", "definition": "Accurate definition as used in this lecture"}
+    { "term": "Key Concept 1", "definition": "Clear, thorough definition based on the material" }
   ],
   "flashcards": [
-    {"question": "Specific question about real concept from this lecture?", "answer": "Specific accurate answer based on the lecture content."},
-    {"question": "Specific question about real concept from this lecture?", "answer": "Specific accurate answer based on the lecture content."},
-    {"question": "Specific question about real concept from this lecture?", "answer": "Specific accurate answer based on the lecture content."},
-    {"question": "Specific question about real concept from this lecture?", "answer": "Specific accurate answer based on the lecture content."},
-    {"question": "Specific question about real concept from this lecture?", "answer": "Specific accurate answer based on the lecture content."},
-    {"question": "Specific question about real concept from this lecture?", "answer": "Specific accurate answer based on the lecture content."}
+    { "question": "Question testing an important concept?", "answer": "Detailed, accurate answer" }
   ],
   "quiz": [
     {
-      "question": "Real multiple-choice question about this lecture's content?",
-      "options": ["A. Real option", "B. Real option", "C. Real option", "D. Real option"],
-      "answer": "A. The correct real option",
-      "explanation": "Why this is correct based on what the lecture taught."
-    },
-    {
-      "question": "Real multiple-choice question about this lecture's content?",
-      "options": ["A. Real option", "B. Real option", "C. Real option", "D. Real option"],
-      "answer": "B. The correct real option",
-      "explanation": "Why this is correct based on what the lecture taught."
-    },
-    {
-      "question": "Real multiple-choice question about this lecture's content?",
-      "options": ["A. Real option", "B. Real option", "C. Real option", "D. Real option"],
-      "answer": "C. The correct real option",
-      "explanation": "Why this is correct based on what the lecture taught."
-    },
-    {
-      "question": "Real multiple-choice question about this lecture's content?",
-      "options": ["A. Real option", "B. Real option", "C. Real option", "D. Real option"],
-      "answer": "D. The correct real option",
-      "explanation": "Why this is correct based on what the lecture taught."
-    },
-    {
-      "question": "Real multiple-choice question about this lecture's content?",
-      "options": ["A. Real option", "B. Real option", "C. Real option", "D. Real option"],
-      "answer": "A. The correct real option",
-      "explanation": "Why this is correct based on what the lecture taught."
+      "question": "Multiple choice question testing deep understanding?",
+      "options": ["A. Option 1", "B. Option 2", "C. Option 3", "D. Option 4"],
+      "answer": "A. Option 1",
+      "explanation": "Clear explanation of why this answer is correct based on the material"
     }
   ]
 }
 
-TRANSCRIPT / STUDY MATERIAL:
-${contextSnippet}`;
+Provide at least 6 keyPoints, 4 actionItems, 5 glossary items, 6 flashcards, and 5 quiz items. Base ALL content strictly on the material below.
 
-  try {
-    const rawAiResponse = await generateAiText(
-      prompt,
-      systemInstruction,
-      0.3,
-      8000
-    );
+CONTENT:
+${ctx}`;
 
-    const parsed = extractJson(rawAiResponse);
-    if (parsed && parsed.title && parsed.summary && parsed.summary.length > 100) {
-      return sanitizeNotes(parsed, textContent);
+    for (const modelName of GEMINI_MODELS) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 8192,
+            responseMimeType: "application/json",
+          },
+        });
+        const result = await model.generateContent(geminiPrompt);
+        const raw = result?.response?.text();
+        const parsed = extractJson(raw);
+        if (parsed && parsed.title && parsed.summary && String(parsed.summary).length > 60) {
+          console.log(`[Gemini JSON Mode ${modelName}] SUCCESS`);
+          return sanitizeNotes(parsed, textContent);
+        }
+      } catch (e) {
+        console.warn(`[Gemini JSON Mode ${modelName}] Error:`, e.message);
+      }
+
+      // Plain text mode fallback
+      try {
+        const plainModel = genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
+        });
+        const result = await plainModel.generateContent(
+          geminiPrompt + "\n\nReturn ONLY the JSON object. No markdown code blocks, no intro, no outro."
+        );
+        const raw = result?.response?.text();
+        const parsed = extractJson(raw);
+        if (parsed && parsed.summary && String(parsed.summary).length > 50) {
+          console.log(`[Gemini Plain Mode ${modelName}] SUCCESS`);
+          return sanitizeNotes(parsed, textContent);
+        }
+      } catch (e2) {
+        console.warn(`[Gemini Plain Mode ${modelName}] Error:`, e2.message);
+      }
     }
-    // If we got a response but JSON parsing failed, try to generate once more with a simpler prompt
-    console.warn("First attempt JSON parse failed, retrying with simpler prompt...");
-    const retryPrompt = `You are a study notes generator. Read this transcript and return a JSON object with these exact keys: title, subject, summary, keyPoints (array of strings), actionItems (array of strings), glossary (array of {term, definition}), flashcards (array of {question, answer}), quiz (array of {question, options, answer, explanation}).
-
-RULE: Only return the JSON object. No markdown. No extra text. Base everything on the ACTUAL content below.
-
-TRANSCRIPT:
-${contextSnippet.slice(0, 40000)}`;
-
-    const retryResponse = await generateAiText(retryPrompt, "Return valid JSON only.", 0.2, 6000);
-    const retryParsed = extractJson(retryResponse);
-    if (retryParsed && (retryParsed.summary || retryParsed.keyPoints)) {
-      return sanitizeNotes(retryParsed, textContent);
-    }
-
-    return sanitizeNotes(null, textContent);
-  } catch (error) {
-    console.error("Study notes generation error:", error.message);
-    return createStructuredFallbackNotes(textContent, error.message);
   }
+
+  // Strategy 2: Groq models
+  const groqKey = process.env.GROQ_API_KEY;
+  if (groqKey) {
+    try {
+      const groq = new Groq({ apiKey: groqKey });
+      const groqPrompt = `You are an expert study notes generator. Read the study material and generate a comprehensive study package in valid JSON.
+
+JSON keys required:
+- title: string
+- subject: string
+- summary: string (detailed, 3-6 paragraphs)
+- keyPoints: array of 6-8 strings
+- actionItems: array of 4-5 strings
+- glossary: array of {term, definition}
+- flashcards: array of {question, answer}
+- quiz: array of {question, options, answer, explanation}
+
+Return ONLY valid JSON.
+
+CONTENT:
+${ctx.slice(0, 30000)}`;
+
+      for (const modelName of GROQ_FALLBACK_MODELS) {
+        try {
+          const completion = await groq.chat.completions.create({
+            model: modelName,
+            messages: [
+              { role: "system", content: "You are a JSON-only study notes generator. Return ONLY valid JSON, no markdown codeblocks or conversational text." },
+              { role: "user", content: groqPrompt },
+            ],
+            temperature: 0.2,
+            max_tokens: 6000,
+            response_format: { type: "json_object" },
+          });
+          const raw = completion.choices?.[0]?.message?.content;
+          const parsed = extractJson(raw);
+          if (parsed && parsed.summary && String(parsed.summary).length > 50) {
+            console.log(`[Groq ${modelName}] SUCCESS`);
+            return sanitizeNotes(parsed, textContent);
+          }
+        } catch (e) {
+          console.warn(`[Groq ${modelName}] Error:`, e.message);
+        }
+      }
+    } catch (groqErr) {
+      console.warn("Groq initialization error in generateStudyNotes:", groqErr.message);
+    }
+  }
+
+  // Strategy 3: Local extraction fallback
+  console.warn("[generateStudyNotes] All AI strategies failed or were unavailable, using local extraction.");
+  return buildNotesFromTranscript(textContent);
 }
 
 // ----------------------------------------------------
@@ -696,42 +889,47 @@ router.post("/process-file", authenticateToken, upload.single("file"), async (re
     let extractedText = "";
     let detectedType = "text";
 
+    const imageExts = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff"];
+    const mediaExts = [".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".mp4", ".mov", ".webm", ".mkv", ".avi", ".mpeg"];
+    const textExts = [".txt", ".md", ".csv", ".json", ".py", ".js", ".jsx", ".ts", ".tsx", ".html", ".css", ".cpp", ".java", ".c", ".rs", ".sql", ".xml"];
+
     if (ext === ".pdf" || mimetype === "application/pdf") {
       detectedType = "pdf";
       extractedText = await extractPdfText(buffer);
     } else if (ext === ".docx" || ext === ".doc" || mimetype.includes("wordprocessingml") || mimetype.includes("msword")) {
       detectedType = "docx";
       extractedText = await extractDocxText(buffer);
+    } else if (imageExts.includes(ext) || mimetype.startsWith("image/")) {
+      detectedType = "image";
+      extractedText = await extractImageText(buffer, mimetype || `image/${ext.replace(".", "")}`);
     } else if (
-      ext === ".txt" ||
-      ext === ".md" ||
-      ext === ".csv" ||
-      ext === ".json" ||
-      mimetype.startsWith("text/")
+      textExts.includes(ext) ||
+      mimetype.startsWith("text/") ||
+      mimetype === "application/json"
     ) {
       detectedType = "text";
       extractedText = buffer.toString("utf-8");
     } else if (
       mimetype.startsWith("audio/") ||
       mimetype.startsWith("video/") ||
-      [".mp3", ".wav", ".m4a", ".mp4", ".mov", ".webm", ".mkv", ".ogg", ".aac"].includes(ext)
+      mediaExts.includes(ext)
     ) {
       detectedType = "audio-video";
-      extractedText = await transcribeMediaFile(buffer, originalname);
+      extractedText = await transcribeMediaFile(buffer, originalname, mimetype);
     } else {
       try {
         extractedText = buffer.toString("utf-8");
       } catch (e) {
         return res.status(400).json({
-          error: `Unsupported file format (${ext || mimetype}). Please upload a PDF, Word (.docx), TXT, Markdown, or Audio/Video recording.`,
+          error: `Unsupported file format (${ext || mimetype}). Please upload a PDF, Word (.docx), Image (PNG/JPG), Text, or Audio/Video recording.`,
         });
       }
     }
 
     const cleanTranscript = safeString(extractedText).trim();
-    if (!cleanTranscript || cleanTranscript.length < 15) {
+    if (!cleanTranscript || cleanTranscript.length < 10) {
       return res.status(400).json({
-        error: "Could not extract readable text from this file. Please make sure the file contains text or clear audio.",
+        error: "Could not extract readable text or speech from this file. Please make sure the document has readable text, clear audio, or sharp images.",
       });
     }
 

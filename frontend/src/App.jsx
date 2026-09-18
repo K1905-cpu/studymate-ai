@@ -437,14 +437,30 @@ export function MainApp() {
 
   const MAX_FILE_SIZE_MB = 50;
   const ALLOWED_EXTS = [
+    // Documents
     ".pdf",
     ".docx",
     ".doc",
     ".txt",
     ".md",
+    ".csv",
+    ".json",
+    ".py",
+    ".js",
+    ".html",
+    // Images (OCR Vision for whiteboard/slides/notes)
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".bmp",
+    // Audio & Video
     ".mp3",
     ".wav",
     ".m4a",
+    ".aac",
+    ".ogg",
+    ".flac",
     ".mp4",
     ".mov",
     ".webm",
@@ -542,7 +558,7 @@ export function MainApp() {
     const ext = "." + selectedFile.name.split(".").pop().toLowerCase();
     if (!ALLOWED_EXTS.includes(ext)) {
       setError(
-        `Unsupported file type (${ext}). Please select a PDF (.pdf), Word Document (.docx), Plain Text (.txt, .md), or Audio/Video recording (.mp3, .wav, .mp4, .webm).`
+        `Unsupported file type (${ext}). Supported: PDF, Word (.docx), Images (.png, .jpg, .webp), Text & Code, and Audio/Video recording (.mp3, .wav, .mp4, etc.).`
       );
       setFile(null);
       return;
@@ -588,7 +604,7 @@ export function MainApp() {
       let extractedText = "";
       let response;
 
-      const isMedia = [".mp3", ".wav", ".m4a", ".mp4", ".mov", ".webm", ".mkv", ".ogg", ".aac"].includes(ext);
+      const isMedia = [".mp3", ".wav", ".m4a", ".mp4", ".mov", ".webm", ".mkv", ".ogg", ".aac", ".flac"].includes(ext);
 
       // 1. Client-Side Extraction for Documents (Bypasses Vercel 4.5MB limit completely)
       if (ext === ".pdf") {
@@ -603,7 +619,9 @@ export function MainApp() {
         } catch (docxErr) {
           console.warn("Client Docx extraction failed, falling back to server:", docxErr);
         }
-      } else if (ext === ".txt" || ext === ".md" || ext === ".csv" || ext === ".json") {
+      } else if (
+        [".txt", ".md", ".csv", ".json", ".py", ".js", ".jsx", ".ts", ".tsx", ".html", ".css"].includes(ext)
+      ) {
         try {
           extractedText = await file.text();
         } catch (txtErr) {
@@ -1638,8 +1656,8 @@ ${
             <div className="drop-icon">📁</div>
             <h3>{file ? file.name : "Drag & Drop or Browse Study File"}</h3>
             <p className="muted-text">
-              Supports: <strong>PDF</strong>, <strong>Word (.docx)</strong>, <strong>TXT/Markdown</strong>, and{" "}
-              <strong>Audio/Video (.mp3, .wav, .mp4, .webm)</strong> up to <strong>50 MB</strong>.
+              Supports: <strong>PDF</strong>, <strong>Word (.docx)</strong>, <strong>Images (Slides/Whiteboard)</strong>,{" "}
+              <strong>Audio/Video (.mp3, .wav, .mp4)</strong>, and <strong>Text & Code</strong> up to <strong>50 MB</strong>.
             </p>
 
             <input
@@ -1648,7 +1666,7 @@ ${
               className="file-hidden-input"
               onChange={(e) => handleFileSelection(e.target.files[0])}
               disabled={loading}
-              accept=".pdf,.docx,.doc,.txt,.md,.mp3,.wav,.m4a,.mp4,.mov,.webm,.mkv"
+              accept=".pdf,.docx,.doc,.txt,.md,.csv,.json,.py,.js,.html,.png,.jpg,.jpeg,.webp,.bmp,.mp3,.wav,.m4a,.aac,.ogg,.flac,.mp4,.mov,.webm,.mkv"
             />
 
             <div className="upload-buttons-row">
