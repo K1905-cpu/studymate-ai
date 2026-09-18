@@ -550,8 +550,12 @@ export function MainApp() {
     }
     localStorage.removeItem("studymate_token");
     localStorage.removeItem("studymate_user");
+    sessionStorage.clear();
+    setNotes(null);
+    setTranscript("");
+    setFile(null);
     setUser(null);
-    showToast("Signed out successfully.");
+    window.location.reload();
   };
 
   const handleDownloadTranscriptTxt = () => {
