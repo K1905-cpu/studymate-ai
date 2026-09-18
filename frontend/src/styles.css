@@ -1555,6 +1555,54 @@ body {
   font-size: 13px;
 }
 
+.btn-demo-account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  background: linear-gradient(135deg, #eef2ff 0%, #faf5ff 100%);
+  border: 1.5px dashed #818cf8;
+  border-radius: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  margin-bottom: 16px;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+
+.btn-demo-account:hover {
+  transform: translateY(-1px);
+  border-color: #4f46e5;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+  background: linear-gradient(135deg, #e0e7ff 0%, #f3e8ff 100%);
+}
+
+.demo-sparkle {
+  font-size: 20px;
+}
+
+.demo-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.demo-text strong {
+  font-size: 13px;
+  color: #3730a3;
+}
+
+.demo-text small {
+  font-size: 11px;
+  color: #6366f1;
+}
+
+.demo-arrow {
+  font-size: 16px;
+  color: #6366f1;
+  font-weight: bold;
+}
+
 .auth-form {
   display: flex;
   flex-direction: column;
@@ -1725,153 +1773,6 @@ body {
   font-weight: 700;
   cursor: pointer;
   text-decoration: underline;
-}
-
-/* =========================================
-   SOCIAL AUTHENTICATION (Google, GitHub, LinkedIn)
-========================================= */
-.auth-social-section {
-  margin-bottom: 16px;
-}
-
-.auth-social-buttons {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}
-
-.btn-social {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 16px;
-  border-radius: 11px;
-  font-size: 13.5px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  box-sizing: border-box;
-}
-
-.btn-social:active {
-  transform: scale(0.98);
-}
-
-.btn-social-google {
-  background: #ffffff;
-  color: #1f2937;
-  border: 1.5px solid #e5e7eb;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-}
-
-.btn-social-google:hover:not(:disabled) {
-  background: #f9fafb;
-  border-color: #cbd5e1;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
-  transform: translateY(-1px);
-}
-
-.auth-social-split-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.btn-social-github {
-  background: #24292f;
-  color: #ffffff;
-  border: 1.5px solid #24292f;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.btn-social-github:hover:not(:disabled) {
-  background: #191c20;
-  border-color: #191c20;
-  box-shadow: 0 4px 12px rgba(36, 41, 47, 0.28);
-  transform: translateY(-1px);
-}
-
-.btn-social-linkedin {
-  background: #0a66c2;
-  color: #ffffff;
-  border: 1.5px solid #0a66c2;
-  box-shadow: 0 1px 3px rgba(10, 102, 194, 0.15);
-}
-
-.btn-social-linkedin:hover:not(:disabled) {
-  background: #004182;
-  border-color: #004182;
-  box-shadow: 0 4px 12px rgba(10, 102, 194, 0.32);
-  transform: translateY(-1px);
-}
-
-.auth-divider {
-  display: flex;
-  align-items: center;
-  margin: 16px 0 14px;
-  text-align: center;
-}
-
-.auth-divider::before,
-.auth-divider::after {
-  content: "";
-  flex: 1;
-  border-bottom: 1.5px solid #f1f5f9;
-}
-
-.auth-divider span {
-  padding: 0 12px;
-  font-size: 11px;
-  font-weight: 700;
-  color: #94a3b8;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-}
-
-/* Provider badge on user profile avatar in navbar */
-.user-avatar-wrapper {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.avatar-provider-badge {
-  position: absolute;
-  bottom: -2px;
-  right: -3px;
-  width: 17px;
-  height: 17px;
-  border-radius: 50%;
-  background: #ffffff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
-  border: 1.5px solid #ffffff;
-}
-
-.badge-google {
-  background: #ffffff;
-}
-
-.badge-github {
-  background: #24292f;
-  color: #ffffff;
-}
-
-.badge-linkedin {
-  background: #0a66c2;
-  color: #ffffff;
-}
-
-@media (max-width: 480px) {
-  .auth-social-split-row {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* =========================================

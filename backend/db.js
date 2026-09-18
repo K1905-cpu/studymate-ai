@@ -1,7 +1,6 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import crypto from "crypto";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -89,9 +88,6 @@ async function getMongoModels() {
       name: { type: String, required: true },
       email: { type: String, required: true, unique: true, index: true, lowercase: true },
       passwordHash: { type: String, required: true },
-      provider: { type: String, default: "local" },
-      avatar: { type: String, default: null },
-      providerId: { type: String, default: null },
       createdAt: { type: Date, default: Date.now },
       lastLoginAt: { type: Date, default: Date.now },
     });
@@ -168,13 +164,10 @@ export const db = {
 
   async createUser(user) {
     const newUser = {
-      id: user.id || crypto.randomUUID(),
+      id: user.id,
       name: user.name.trim(),
       email: user.email.trim().toLowerCase(),
-      passwordHash: user.passwordHash || `oauth_${user.provider || "user"}`,
-      provider: user.provider || "local",
-      avatar: user.avatar || null,
-      providerId: user.providerId || null,
+      passwordHash: user.passwordHash,
       createdAt: new Date().toISOString(),
       lastLoginAt: new Date().toISOString(),
     };
@@ -198,56 +191,6 @@ export const db = {
     writeDb(data);
 
     return newUser;
-  },
-
-  async upsertSocialUser({ name, email, provider, avatar, providerId }) {
-    const normalizedEmail = (email || "").trim().toLowerCase();
-    const cleanName = (name || "").trim() || `${provider.charAt(0).toUpperCase() + provider.slice(1)} Scholar`;
-    const now = new Date().toISOString();
-
-    let existingUser = await this.findUserByEmail(normalizedEmail);
-    if (existingUser) {
-      // Update last login and provider/avatar if not present
-      try {
-        const models = await getMongoModels();
-        if (models?.UserModel) {
-          const updateFields = { lastLoginAt: now };
-          if (provider && existingUser.provider === "local") updateFields.provider = provider;
-          if (avatar && !existingUser.avatar) updateFields.avatar = avatar;
-          if (providerId && !existingUser.providerId) updateFields.providerId = providerId;
-          await models.UserModel.updateOne({ id: existingUser.id }, { $set: updateFields });
-        }
-      } catch (err) {
-        // fallback
-      }
-
-      const data = readDb();
-      const userInDb = data.users.find((u) => u.id === existingUser.id || u.email.toLowerCase() === normalizedEmail);
-      if (userInDb) {
-        userInDb.lastLoginAt = now;
-        if (provider && userInDb.provider === "local") userInDb.provider = provider;
-        if (avatar && !userInDb.avatar) userInDb.avatar = avatar;
-        if (providerId && !userInDb.providerId) userInDb.providerId = providerId;
-        writeDb(data);
-        existingUser = userInDb;
-      }
-      return existingUser;
-    }
-
-    // Create new user for social login
-    const newUser = {
-      id: crypto.randomUUID(),
-      name: cleanName,
-      email: normalizedEmail,
-      passwordHash: `oauth_${provider}_${crypto.randomBytes(8).toString("hex")}`,
-      provider: provider || "google",
-      avatar: avatar || null,
-      providerId: providerId || null,
-      createdAt: now,
-      lastLoginAt: now,
-    };
-
-    return await this.createUser(newUser);
   },
 
   async updateUserLastLogin(id) {
