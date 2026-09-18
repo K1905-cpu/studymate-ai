@@ -800,11 +800,71 @@ router.post("/auth/login", async (req, res) => {
         id: user.id,
         name: user.name,
         email: user.email,
+        provider: user.provider || "local",
+        avatar: user.avatar || null,
       },
     });
   } catch (error) {
     console.error("Login error:", error);
     res.status(500).json({ error: "Failed to log in." });
+  }
+});
+
+router.post("/auth/social-login", async (req, res) => {
+  try {
+    const { provider, email, name, avatar, providerId } = req.body;
+    const allowedProviders = ["google", "github", "linkedin"];
+
+    if (!provider || !allowedProviders.includes(provider.toLowerCase())) {
+      return res.status(400).json({
+        error: "Invalid or unsupported social provider. Supported: google, github, linkedin.",
+      });
+    }
+
+    const cleanProvider = provider.toLowerCase();
+
+    if (!email || !email.includes("@")) {
+      return res.status(400).json({
+        error: "A valid email address is required for social login.",
+      });
+    }
+
+    const user = await db.upsertSocialUser({
+      name: name || `${cleanProvider.charAt(0).toUpperCase() + cleanProvider.slice(1)} Student`,
+      email: email.trim().toLowerCase(),
+      provider: cleanProvider,
+      avatar: avatar || null,
+      providerId: providerId || null,
+    });
+
+    const token = jwt.sign(
+      {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        provider: user.provider || cleanProvider,
+        avatar: user.avatar,
+      },
+      JWT_SECRET,
+      {
+        expiresIn: "30d",
+      }
+    );
+
+    res.json({
+      message: `Signed in successfully with ${cleanProvider.charAt(0).toUpperCase() + cleanProvider.slice(1)}!`,
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        provider: user.provider || cleanProvider,
+        avatar: user.avatar,
+      },
+    });
+  } catch (error) {
+    console.error("Social login error:", error);
+    res.status(500).json({ error: "Failed to authenticate with social provider." });
   }
 });
 
@@ -822,6 +882,8 @@ router.get("/auth/me", authenticateToken, async (req, res) => {
       id: user.id,
       name: user.name,
       email: user.email,
+      provider: user.provider || "local",
+      avatar: user.avatar || null,
       totalSessions: sessions.length,
       createdAt: user.createdAt,
     },

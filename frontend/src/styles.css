@@ -1776,6 +1776,373 @@ body {
 }
 
 /* =========================================
+   SOCIAL AUTHENTICATION (Google, GitHub, LinkedIn)
+========================================= */
+.auth-social-section {
+  margin-bottom: 16px;
+}
+
+.auth-social-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.btn-social {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 16px;
+  border-radius: 11px;
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-sizing: border-box;
+}
+
+.btn-social:active {
+  transform: scale(0.98);
+}
+
+.btn-social-google {
+  background: #ffffff;
+  color: #1f2937;
+  border: 1.5px solid #e5e7eb;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.btn-social-google:hover:not(:disabled) {
+  background: #f9fafb;
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+}
+
+.auth-social-split-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.btn-social-github {
+  background: #24292f;
+  color: #ffffff;
+  border: 1.5px solid #24292f;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.btn-social-github:hover:not(:disabled) {
+  background: #191c20;
+  border-color: #191c20;
+  box-shadow: 0 4px 12px rgba(36, 41, 47, 0.28);
+  transform: translateY(-1px);
+}
+
+.btn-social-linkedin {
+  background: #0a66c2;
+  color: #ffffff;
+  border: 1.5px solid #0a66c2;
+  box-shadow: 0 1px 3px rgba(10, 102, 194, 0.15);
+}
+
+.btn-social-linkedin:hover:not(:disabled) {
+  background: #004182;
+  border-color: #004182;
+  box-shadow: 0 4px 12px rgba(10, 102, 194, 0.32);
+  transform: translateY(-1px);
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  margin: 16px 0 14px;
+  text-align: center;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  border-bottom: 1.5px solid #f1f5f9;
+}
+
+.auth-divider span {
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+/* Provider badge on user profile avatar in navbar */
+.user-avatar-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.avatar-provider-badge {
+  position: absolute;
+  bottom: -2px;
+  right: -3px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  border: 1.5px solid #ffffff;
+}
+
+.badge-google {
+  background: #ffffff;
+}
+
+.badge-github {
+  background: #24292f;
+  color: #ffffff;
+}
+
+.badge-linkedin {
+  background: #0a66c2;
+  color: #ffffff;
+}
+
+/* Interactive Social Connect Modal */
+.social-overlay {
+  z-index: 10001;
+  backdrop-filter: blur(6px);
+}
+
+.social-connect-modal {
+  max-width: 440px;
+  padding: 24px;
+  border-radius: 20px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.22);
+  animation: popUp 0.25s ease-out;
+}
+
+.social-connect-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+
+.social-connect-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.social-provider-icon-large {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.icon-google {
+  background: #ffffff;
+  border: 1.5px solid #e2e8f0;
+}
+
+.icon-github {
+  background: #24292f;
+  color: #ffffff;
+  border: 1.5px solid #1b1f23;
+}
+
+.icon-linkedin {
+  background: #0a66c2;
+  color: #ffffff;
+  border: 1.5px solid #004182;
+}
+
+.social-connect-brand h4 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.social-connect-sub {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.social-profile-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.social-preview-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+
+.social-preview-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.social-preview-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.social-preview-email {
+  font-size: 12px;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.social-verified-tag {
+  font-size: 11px;
+  font-weight: 700;
+  color: #059669;
+  background: #ecfdf5;
+  padding: 3px 8px;
+  border-radius: 9999px;
+  border: 1px solid #a7f3d0;
+  white-space: nowrap;
+}
+
+.social-field-group {
+  margin-bottom: 14px;
+}
+
+.social-input-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 6px;
+}
+
+.social-custom-input {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1.5px solid #e2e8f0;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  background: #fff;
+  transition: all 0.2s;
+  box-sizing: border-box;
+}
+
+.social-custom-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+
+.social-action-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 18px;
+}
+
+.btn-social-confirm {
+  padding: 12px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.btn-social-theme-google {
+  background: linear-gradient(135deg, #4285f4 0%, #2563eb 100%);
+  color: #ffffff;
+  border: none;
+}
+
+.btn-social-theme-github {
+  background: #24292f;
+  color: #ffffff;
+  border: none;
+}
+
+.btn-social-theme-linkedin {
+  background: #0a66c2;
+  color: #ffffff;
+  border: none;
+}
+
+.social-connecting-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 36px 16px;
+  text-align: center;
+}
+
+.social-connect-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3.5px solid #e2e8f0;
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 16px;
+}
+
+.social-status-text {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0 0 8px;
+}
+
+.social-secure-lock {
+  font-size: 11.5px;
+  color: #64748b;
+}
+
+@media (max-width: 480px) {
+  .auth-social-split-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* =========================================
    TOAST NOTIFICATION
 ========================================= */
 .toast-notification {
