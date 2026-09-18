@@ -395,6 +395,8 @@ export function MainApp() {
   const [loading, setLoading] = useState(false);
   const [notes, setNotes] = useState(null);
   const [transcript, setTranscript] = useState("");
+  const [transcriptSearch, setTranscriptSearch] = useState("");
+  const [transcriptViewMode, setTranscriptViewMode] = useState("formatted");
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("notes");
   const [isDragOver, setIsDragOver] = useState(false);
@@ -552,6 +554,29 @@ export function MainApp() {
     showToast("Signed out successfully.");
   };
 
+  const handleDownloadTranscriptTxt = () => {
+    if (!transcript) return;
+    const blob = new Blob([transcript], { type: "text/plain;charset=utf-8" });
+    const name = (notes?.title || file?.name || "study_transcript").replace(/[^a-z0-9_-]/gi, "_");
+    saveAs(blob, `${name}_transcript.txt`);
+    showToast("Downloaded transcript text file! 💾");
+  };
+
+  const renderHighlightedText = (text, term) => {
+    if (!term || !term.trim()) return text;
+    const cleanTerm = term.trim();
+    const parts = text.split(new RegExp(`(${cleanTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"));
+    return parts.map((part, idx) =>
+      part.toLowerCase() === cleanTerm.toLowerCase() ? (
+        <mark key={idx} className="transcript-highlight">
+          {part}
+        </mark>
+      ) : (
+        part
+      )
+    );
+  };
+
   const handleFileSelection = (selectedFile) => {
     if (!selectedFile) return;
 
@@ -664,14 +689,8 @@ export function MainApp() {
           fileType: isMedia ? "audio-video" : ext.replace(".", ""),
         });
       } else {
-        // Serverless cloud limit guard for non-extracted binary uploads
-        if (file.size > 4.5 * 1024 * 1024) {
-          throw new Error(
-            `File size (${(file.size / (1024 * 1024)).toFixed(1)} MB) could not be extracted directly. Please make sure the file contains clear readable text or audible speech.`
-          );
-        }
-
-        // Fallback upload
+        showToast("Uploading and transcribing file on server... 🎙️✨");
+        // Fallback upload directly to server (up to 50MB)
         const formData = new FormData();
         formData.append("file", file);
 
@@ -2256,16 +2275,121 @@ ${
               <div className="tab-pane">
                 <div className="card content-card">
                   <div className="section-title-row">
-                    <h3>📜 Full Processed Transcript & Source Text</h3>
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => copyToClipboard(transcript)}
-                    >
-                      Copy Transcript
-                    </button>
+                    <div>
+                      <h3>📜 Full Processed Transcript & Source Material</h3>
+                      <p className="section-desc">
+                        Clean verbatim source text extracted from your document, audio, or video recording.
+                      </p>
+                    </div>
                   </div>
-                  <pre className="transcript-box">{transcript || "No transcript available."}</pre>
+
+                  {/* Transcript Metadata & Statistics */}
+                  {transcript && (
+                    <div className="transcript-meta-bar">
+                      <span className="transcript-stat-chip">
+                        📊 <strong>{transcript.trim().split(/\s+/).filter(Boolean).length.toLocaleString()}</strong> words
+                      </span>
+                      <span className="transcript-stat-chip">
+                        ⏱️ ~<strong>{Math.max(1, Math.ceil(transcript.trim().split(/\s+/).filter(Boolean).length / 180))}</strong> min read
+                      </span>
+                      <span className="transcript-stat-chip">
+                        🔤 <strong>{transcript.length.toLocaleString()}</strong> chars
+                      </span>
+                      <span className="transcript-stat-chip">
+                        📁 {renderSafe(notes?.subject) || "Study Notes"}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Toolbar with Search, View Mode, and Actions */}
+                  {transcript && (
+                    <div className="transcript-toolbar">
+                      <div className="transcript-search-box">
+                        <input
+                          type="text"
+                          className="transcript-search-input"
+                          placeholder="🔍 Search within transcript..."
+                          value={transcriptSearch}
+                          onChange={(e) => setTranscriptSearch(e.target.value)}
+                        />
+                        {transcriptSearch && (
+                          <button
+                            type="button"
+                            className="transcript-search-clear"
+                            onClick={() => setTranscriptSearch("")}
+                            title="Clear search"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="transcript-actions-group">
+                        <div className="view-mode-tabs">
+                          <button
+                            type="button"
+                            className={`view-mode-btn ${transcriptViewMode === "formatted" ? "active" : ""}`}
+                            onClick={() => setTranscriptViewMode("formatted")}
+                          >
+                            📖 Clean Reader
+                          </button>
+                          <button
+                            type="button"
+                            className={`view-mode-btn ${transcriptViewMode === "raw" ? "active" : ""}`}
+                            onClick={() => setTranscriptViewMode("raw")}
+                          >
+                            💻 Raw Source
+                          </button>
+                        </div>
+
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => copyToClipboard(transcript)}
+                          title="Copy text to clipboard"
+                        >
+                          📋 Copy
+                        </button>
+
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          onClick={handleDownloadTranscriptTxt}
+                          title="Download transcript as text file"
+                        >
+                          📥 Download .TXT
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Content Display */}
+                  {!transcript ? (
+                    <div className="empty-state-box">
+                      <p>No transcript text available for this session.</p>
+                    </div>
+                  ) : transcriptViewMode === "formatted" ? (
+                    <div className="transcript-reader">
+                      {transcript.split("\n\n").map((paragraph, pIdx) => {
+                        const trimmed = paragraph.trim();
+                        if (!trimmed) return null;
+                        if (trimmed.startsWith("📄 [") && trimmed.endsWith("]")) {
+                          return (
+                            <div key={pIdx} className="transcript-page-divider">
+                              {trimmed}
+                            </div>
+                          );
+                        }
+                        return (
+                          <p key={pIdx} className="transcript-paragraph">
+                            {renderHighlightedText(trimmed, transcriptSearch)}
+                          </p>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <pre className="transcript-box">{transcript}</pre>
+                  )}
                 </div>
               </div>
             )}

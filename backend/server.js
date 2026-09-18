@@ -298,14 +298,95 @@ async function extractImageText(buffer, mimetype = "image/jpeg") {
   return "";
 }
 
+// Format and structure transcripts with readable paragraphs, clean page markers, and removed fluff
+function cleanAndFormatTranscript(rawText, fileType = "text") {
+  if (!rawText || typeof rawText !== "string") return "";
+  let text = rawText.trim();
+
+  // Strip think and reasoning tags
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "");
+
+  // Strip common AI transcription intro/outro fluff
+  text = text
+    .replace(/^(Here is the (full |verbatim )?transcript(ion)?( of the (audio|video|recording|file))?:?\s*)/i, "")
+    .replace(/^(Transcript(ion)?:?\s*)/i, "")
+    .replace(/^Below is the (full |verbatim )?transcript(ion)?:?\s*/i, "");
+
+  // Normalize line endings
+  text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+  // If text is audio/speech transcription without natural paragraphs, group sentences into readable blocks
+  const isSpeech = fileType === "audio-video" || fileType === "audio" || fileType === "video";
+  if (isSpeech && !text.includes("\n\n")) {
+    const sentences = text.match(/[^.!?]+[.!?]+(\s+|$)|[^.!?]+$/g) || [text];
+    const paragraphs = [];
+    let current = [];
+    for (let i = 0; i < sentences.length; i++) {
+      current.push(sentences[i].trim());
+      if (current.length >= 4 || (current.join(" ").length > 320 && /[.!?]$/.test(sentences[i].trim()))) {
+        paragraphs.push(current.join(" "));
+        current = [];
+      }
+    }
+    if (current.length > 0) paragraphs.push(current.join(" "));
+    text = paragraphs.join("\n\n");
+  }
+
+  // Reflow choppy line-broken text (common in PDF extraction)
+  const lines = text.split("\n");
+  const reflowed = [];
+  let currentPara = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) {
+      if (currentPara.length > 0) {
+        reflowed.push(currentPara.join(" "));
+        currentPara = [];
+      }
+      continue;
+    }
+
+    // Preserve page markers clearly
+    if (/^--- Page \d+ ---$/i.test(line) || /^Page \d+( of \d+)?$/i.test(line)) {
+      if (currentPara.length > 0) {
+        reflowed.push(currentPara.join(" "));
+        currentPara = [];
+      }
+      reflowed.push(`\n📄 [ ${line.replace(/---/g, "").trim()} ]\n`);
+      continue;
+    }
+
+    currentPara.push(line);
+    // Break paragraph on terminal punctuation if line is substantive
+    if (/[.:!?]$/.test(line) && line.length > 50) {
+      reflowed.push(currentPara.join(" "));
+      currentPara = [];
+    }
+  }
+
+  if (currentPara.length > 0) {
+    reflowed.push(currentPara.join(" "));
+  }
+
+  const finalTranscript = reflowed.join("\n\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/ {2,}/g, " ")
+    .trim();
+
+  return finalTranscript || text;
+}
+
 async function transcribeMediaFile(buffer, filename, mimetype = "audio/wav") {
   const groqKey = process.env.GROQ_API_KEY;
   const geminiKey = process.env.GEMINI_API_KEY;
   const ext = path.extname(filename || "").toLowerCase() || ".wav";
 
-  // 1. Try Groq Whisper (Whisper Large V3 and Turbo)
-  if (groqKey) {
-    const tempPath = path.join(os.tmpdir(), `${Date.now()}-${uuidv4()}${ext}`);
+  // 1. Try Groq Whisper (Whisper Large V3 and Turbo) for supported formats
+  const groqSupportedExts = [".mp3", ".wav", ".m4a", ".mp4", ".mpeg", ".mpga", ".webm", ".ogg", ".flac"];
+  if (groqKey && (groqSupportedExts.includes(ext) || ext === ".wav")) {
+    const tempExt = groqSupportedExts.includes(ext) ? ext : ".wav";
+    const tempPath = path.join(os.tmpdir(), `${Date.now()}-${uuidv4()}${tempExt}`);
     try {
       fs.writeFileSync(tempPath, buffer);
       const groq = new Groq({ apiKey: groqKey });
@@ -318,7 +399,7 @@ async function transcribeMediaFile(buffer, filename, mimetype = "audio/wav") {
           });
           const text = typeof transcription === "string" ? transcription : transcription?.text;
           if (text && text.trim().length > 0) {
-            return text.trim();
+            return cleanAndFormatTranscript(text, "audio-video");
           }
         } catch (wErr) {
           console.warn(`Groq ${whisperModel} transcription failed:`, wErr.message);
@@ -366,7 +447,14 @@ async function transcribeMediaFile(buffer, filename, mimetype = "audio/wav") {
       ]);
       const geminiTranscript = res?.response?.text();
       if (geminiTranscript && geminiTranscript.trim().length > 0) {
-        return geminiTranscript.trim();
+        let clean = geminiTranscript
+          .replace(/^(Here is the (verbatim |full )?transcript(ion)?( of the (audio|video|recording|file))?:?\s*)/i, "")
+          .replace(/^(Transcript(ion)?:?\s*)/i, "")
+          .trim();
+        if (clean.toLowerCase().includes("there is no speech in this audio") || clean.length < 5) {
+          throw new Error("No audible speech could be detected in this audio/video recording.");
+        }
+        return cleanAndFormatTranscript(clean, "audio-video");
       }
     } catch (geminiErr) {
       console.warn("Gemini multimodal audio/video transcription fallback failed:", geminiErr.message);
@@ -825,7 +913,7 @@ router.patch("/history/:id/quiz-score", authenticateToken, async (req, res) => {
 router.post("/process-text", authenticateToken, async (req, res) => {
   try {
     const { text, filename, fileType } = req.body;
-    const cleanTranscript = safeString(text).trim();
+    const cleanTranscript = cleanAndFormatTranscript(text, fileType || "text");
 
     if (!cleanTranscript || cleanTranscript.length < 15) {
       return res.status(400).json({
@@ -867,7 +955,7 @@ router.post("/transcribe-chunk", authenticateToken, upload.single("file"), async
     }
     const { originalname, buffer } = req.file;
     const transcribedText = await transcribeMediaFile(buffer, originalname || "chunk.wav");
-    const cleanText = safeString(transcribedText).trim();
+    const cleanText = cleanAndFormatTranscript(transcribedText, "audio-video");
     res.json({ text: cleanText });
   } catch (error) {
     console.error("Transcribe chunk error:", error);
@@ -926,7 +1014,7 @@ router.post("/process-file", authenticateToken, upload.single("file"), async (re
       }
     }
 
-    const cleanTranscript = safeString(extractedText).trim();
+    const cleanTranscript = cleanAndFormatTranscript(extractedText, detectedType);
     if (!cleanTranscript || cleanTranscript.length < 10) {
       return res.status(400).json({
         error: "Could not extract readable text or speech from this file. Please make sure the document has readable text, clear audio, or sharp images.",
