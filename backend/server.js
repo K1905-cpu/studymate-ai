@@ -868,6 +868,220 @@ router.post("/auth/social-login", async (req, res) => {
   }
 });
 
+// ----------------------------------------------------
+// REAL OAUTH 2.0 REDIRECTS (Google, GitHub, LinkedIn)
+// ----------------------------------------------------
+router.get("/auth/oauth/:provider", (req, res) => {
+  const provider = (req.params.provider || "").toLowerCase();
+  const allowed = ["google", "github", "linkedin"];
+  if (!allowed.includes(provider)) {
+    return res.status(400).send("Invalid OAuth provider. Supported: google, github, linkedin.");
+  }
+
+  const host = req.get("host");
+  const protocol = req.protocol === "https" || req.get("x-forwarded-proto") === "https" ? "https" : "http";
+  const frontendUrl =
+    process.env.APP_URL || (host.includes("5000") ? `${protocol}://${host.replace(":5000", ":5173")}` : `${protocol}://${host}`);
+  const redirectUri = `${protocol}://${host}/api/auth/oauth/${provider}/callback`;
+
+  let clientId = "";
+  if (provider === "google") clientId = process.env.GOOGLE_CLIENT_ID;
+  if (provider === "github") clientId = process.env.GITHUB_CLIENT_ID;
+  if (provider === "linkedin") clientId = process.env.LINKEDIN_CLIENT_ID;
+
+  if (!clientId || !clientId.trim()) {
+    const providerName = provider.charAt(0).toUpperCase() + provider.slice(1);
+    const msg = `${providerName} OAuth credentials are not configured in backend/.env yet. Please add ${provider.toUpperCase()}_CLIENT_ID and ${provider.toUpperCase()}_CLIENT_SECRET.`;
+    return res.redirect(`${frontendUrl}/?oauth_error=${encodeURIComponent(msg)}`);
+  }
+
+  let authUrl = "";
+  if (provider === "google") {
+    authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId.trim())}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=openid%20email%20profile&access_type=offline&prompt=select_account`;
+  } else if (provider === "github") {
+    authUrl = `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(clientId.trim())}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=read:user%20user:email`;
+  } else if (provider === "linkedin") {
+    authUrl = `https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=${encodeURIComponent(clientId.trim())}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=openid%20profile%20email`;
+  }
+
+  return res.redirect(authUrl);
+});
+
+router.get("/auth/oauth/:provider/callback", async (req, res) => {
+  const provider = (req.params.provider || "").toLowerCase();
+  const code = req.query.code;
+  const host = req.get("host");
+  const protocol = req.protocol === "https" || req.get("x-forwarded-proto") === "https" ? "https" : "http";
+  const frontendUrl =
+    process.env.APP_URL || (host.includes("5000") ? `${protocol}://${host.replace(":5000", ":5173")}` : `${protocol}://${host}`);
+  const redirectUri = `${protocol}://${host}/api/auth/oauth/${provider}/callback`;
+
+  if (req.query.error) {
+    const errorDesc = req.query.error_description || req.query.error;
+    return res.redirect(
+      `${frontendUrl}/?oauth_error=${encodeURIComponent(`${provider.toUpperCase()} Auth: ${errorDesc}`)}`
+    );
+  }
+
+  if (!code) {
+    return res.redirect(`${frontendUrl}/?oauth_error=${encodeURIComponent("Authorization code missing.")}`);
+  }
+
+  try {
+    let email = "";
+    let name = "";
+    let avatar = "";
+    let providerId = "";
+
+    if (provider === "google") {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          client_id: (clientId || "").trim(),
+          client_secret: (clientSecret || "").trim(),
+          redirect_uri: redirectUri,
+          grant_type: "authorization_code",
+        }),
+      });
+
+      const tokenData = await tokenRes.json();
+      if (!tokenRes.ok || !tokenData.access_token) {
+        throw new Error(tokenData.error_description || tokenData.error || "Failed to exchange Google token");
+      }
+
+      const userRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      });
+      const userData = await userRes.json();
+      email = userData.email;
+      name = userData.name || userData.given_name || "Google User";
+      avatar = userData.picture || "";
+      providerId = userData.sub || "";
+    } else if (provider === "github") {
+      const clientId = process.env.GITHUB_CLIENT_ID;
+      const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+
+      const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          client_id: (clientId || "").trim(),
+          client_secret: (clientSecret || "").trim(),
+          code,
+          redirect_uri: redirectUri,
+        }),
+      });
+
+      const tokenData = await tokenRes.json();
+      if (!tokenRes.ok || !tokenData.access_token) {
+        throw new Error(tokenData.error_description || tokenData.error || "Failed to exchange GitHub token");
+      }
+
+      const userRes = await fetch("https://api.github.com/user", {
+        headers: {
+          Authorization: `Bearer ${tokenData.access_token}`,
+          "User-Agent": "StudyMate-AI",
+        },
+      });
+      const userData = await userRes.json();
+      name = userData.name || userData.login || "GitHub User";
+      avatar = userData.avatar_url || "";
+      providerId = String(userData.id || "");
+      email = userData.email;
+
+      if (!email) {
+        const emailsRes = await fetch("https://api.github.com/user/emails", {
+          headers: {
+            Authorization: `Bearer ${tokenData.access_token}`,
+            "User-Agent": "StudyMate-AI",
+          },
+        });
+        const emails = await emailsRes.json();
+        if (Array.isArray(emails)) {
+          const primary = emails.find((e) => e.primary && e.verified) || emails[0];
+          email = primary?.email;
+        }
+      }
+    } else if (provider === "linkedin") {
+      const clientId = process.env.LINKEDIN_CLIENT_ID;
+      const clientSecret = process.env.LINKEDIN_CLIENT_SECRET;
+
+      const tokenRes = await fetch("https://www.linkedin.com/oauth/v2/accessToken", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          client_id: (clientId || "").trim(),
+          client_secret: (clientSecret || "").trim(),
+          redirect_uri: redirectUri,
+          grant_type: "authorization_code",
+        }),
+      });
+
+      const tokenData = await tokenRes.json();
+      if (!tokenRes.ok || !tokenData.access_token) {
+        throw new Error(tokenData.error_description || tokenData.error || "Failed to exchange LinkedIn token");
+      }
+
+      const userRes = await fetch("https://api.linkedin.com/v2/userinfo", {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      });
+      const userData = await userRes.json();
+      email = userData.email;
+      name = userData.name || `${userData.given_name || ""} ${userData.family_name || ""}`.trim() || "LinkedIn User";
+      avatar = userData.picture || "";
+      providerId = userData.sub || "";
+    }
+
+    if (!email) {
+      throw new Error(`Could not obtain email address from ${provider}.`);
+    }
+
+    const user = await db.upsertSocialUser({
+      name,
+      email,
+      provider,
+      avatar,
+      providerId,
+    });
+
+    const token = jwt.sign(
+      {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        provider: user.provider || provider,
+        avatar: user.avatar,
+      },
+      JWT_SECRET,
+      { expiresIn: "30d" }
+    );
+
+    const safeUser = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      provider: user.provider || provider,
+      avatar: user.avatar,
+    };
+
+    return res.redirect(
+      `${frontendUrl}/?token=${encodeURIComponent(token)}&user=${encodeURIComponent(JSON.stringify(safeUser))}`
+    );
+  } catch (err) {
+    console.error(`OAuth callback error for ${provider}:`, err);
+    return res.redirect(`${frontendUrl}/?oauth_error=${encodeURIComponent(err.message)}`);
+  }
+});
+
 router.get("/auth/me", authenticateToken, async (req, res) => {
   if (!req.user) {
     return res.json({ user: null });

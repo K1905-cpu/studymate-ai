@@ -412,16 +412,6 @@ export function MainApp() {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
 
-  // Social Auth Modal state
-  const [socialModal, setSocialModal] = useState({
-    isOpen: false,
-    provider: "google",
-    email: "",
-    name: "",
-    loading: false,
-    statusText: "",
-  });
-
   // History state
   const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
   const [historySessions, setHistorySessions] = useState([]);
@@ -532,6 +522,38 @@ export function MainApp() {
     fetchHistory();
   }, [user]);
 
+  // Listen for OAuth callback tokens or errors on redirect back
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const tokenParam = params.get("token");
+      const userParam = params.get("user");
+      const errorParam = params.get("oauth_error");
+
+      if (tokenParam && userParam) {
+        const parsedUser = JSON.parse(decodeURIComponent(userParam));
+        localStorage.setItem("studymate_token", tokenParam);
+        localStorage.setItem("studymate_user", JSON.stringify(parsedUser));
+        setUser(parsedUser);
+        setShowAuthModal(false);
+        const providerName = parsedUser.provider
+          ? parsedUser.provider.charAt(0).toUpperCase() + parsedUser.provider.slice(1)
+          : "Google";
+        showToast(`Signed in successfully with ${providerName}! 🚀`);
+        confetti({ particleCount: 90, spread: 80, origin: { y: 0.6 } });
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } else if (errorParam) {
+        const decodedError = decodeURIComponent(errorParam);
+        setAuthError(decodedError);
+        setShowAuthModal(true);
+        showToast(decodedError);
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    } catch (e) {
+      console.error("OAuth redirect parse error:", e);
+    }
+  }, []);
+
   useEffect(() => {
     if (chatScrollRef.current) {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
@@ -575,47 +597,6 @@ export function MainApp() {
     return parts[0].slice(0, 2).toUpperCase();
   };
 
-  const handleDemoSignIn = async () => {
-    setAuthError("");
-    setAuthLoading(true);
-    try {
-      try {
-        const res = await axios.post(`${API_BASE_URL}/api/auth/login`, {
-          email: "demo@studymate.ai",
-          password: "demoPassword123!",
-        });
-        if (res.data.token && res.data.user) {
-          localStorage.setItem("studymate_token", res.data.token);
-          localStorage.setItem("studymate_user", JSON.stringify(res.data.user));
-          setUser(res.data.user);
-          setShowAuthModal(false);
-          confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
-          showToast("Signed in as Demo Student! 🚀");
-          return;
-        }
-      } catch (loginErr) {
-        const regRes = await axios.post(`${API_BASE_URL}/api/auth/register`, {
-          name: "Demo Student",
-          email: "demo@studymate.ai",
-          password: "demoPassword123!",
-        });
-        if (regRes.data.token && regRes.data.user) {
-          localStorage.setItem("studymate_token", regRes.data.token);
-          localStorage.setItem("studymate_user", JSON.stringify(regRes.data.user));
-          setUser(regRes.data.user);
-          setShowAuthModal(false);
-          confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
-          showToast("Welcome Demo Student! 🚀");
-          return;
-        }
-      }
-    } catch (err) {
-      setAuthError("Could not log in to demo account.");
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -647,76 +628,11 @@ export function MainApp() {
     }
   };
 
-  const openSocialAuth = (provider) => {
+  const handleSocialRedirect = (provider) => {
     setAuthError("");
-    const providerNames = {
-      google: "Google Scholar",
-      github: "GitHub Developer",
-      linkedin: "LinkedIn Learner",
-    };
-    const providerDomains = {
-      google: "gmail.com",
-      github: "github.com",
-      linkedin: "linkedin.com",
-    };
-
-    let suggestedEmail = authForm.email;
-    if (!suggestedEmail || !suggestedEmail.includes("@")) {
-      const userPrefix = authForm.name ? authForm.name.toLowerCase().replace(/\s+/g, ".") : "student";
-      suggestedEmail = `${userPrefix}@${providerDomains[provider]}`;
-    }
-
-    setSocialModal({
-      isOpen: true,
-      provider,
-      email: suggestedEmail,
-      name: authForm.name || providerNames[provider],
-      loading: false,
-      statusText: "",
-    });
-  };
-
-  const handleExecuteSocialLogin = async (customProvider, customEmail, customName) => {
-    const activeProvider = customProvider || socialModal.provider || "google";
-    const activeEmail = customEmail || socialModal.email;
-    const activeName =
-      customName || socialModal.name || `${activeProvider.charAt(0).toUpperCase() + activeProvider.slice(1)} Student`;
-
-    if (!activeEmail || !activeEmail.includes("@")) {
-      setAuthError("Please provide a valid email to connect.");
-      return;
-    }
-
-    setSocialModal((prev) => ({
-      ...prev,
-      loading: true,
-      statusText: `Connecting to ${activeProvider.toUpperCase()} secure verification...`,
-    }));
-
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      const res = await axios.post(`${API_BASE_URL}/api/auth/social-login`, {
-        provider: activeProvider,
-        email: activeEmail,
-        name: activeName,
-      });
-
-      if (res.data.token && res.data.user) {
-        localStorage.setItem("studymate_token", res.data.token);
-        localStorage.setItem("studymate_user", JSON.stringify(res.data.user));
-        setUser(res.data.user);
-        setSocialModal({ isOpen: false, provider: "google", email: "", name: "", loading: false, statusText: "" });
-        setShowAuthModal(false);
-        confetti({ particleCount: 90, spread: 75, origin: { y: 0.6 } });
-        showToast(
-          `Connected via ${activeProvider.charAt(0).toUpperCase() + activeProvider.slice(1)}! Welcome ${res.data.user.name} 🚀`
-        );
-      }
-    } catch (err) {
-      setAuthError(renderSafe(err.response?.data?.error || err.message || "Social sign in failed."));
-      setSocialModal((prev) => ({ ...prev, loading: false, statusText: "" }));
-    }
+    setAuthLoading(true);
+    const targetUrl = `${API_BASE_URL}/api/auth/oauth/${provider}`;
+    window.location.href = targetUrl;
   };
 
   const handleSignOut = (e) => {
@@ -2825,30 +2741,13 @@ ${
               </div>
             )}
 
-            {/* 1-Click Fast Demo Login for instant testing */}
-            {authTab === "login" && (
-              <button
-                type="button"
-                className="btn-demo-account"
-                onClick={handleDemoSignIn}
-                disabled={authLoading}
-              >
-                <span className="demo-sparkle">⚡</span>
-                <span className="demo-text">
-                  <strong>Try 1-Click Demo Account</strong>
-                  <small>Instant access — no typing needed</small>
-                </span>
-                <span className="demo-arrow">→</span>
-              </button>
-            )}
-
-            {/* Social Authentication: Google, GitHub, LinkedIn */}
+            {/* Social Authentication: Direct OAuth Redirect to Google, GitHub, LinkedIn */}
             <div className="auth-social-section">
               <div className="auth-social-buttons">
                 <button
                   type="button"
                   className="btn-social btn-social-google"
-                  onClick={() => openSocialAuth("google")}
+                  onClick={() => handleSocialRedirect("google")}
                   disabled={authLoading}
                 >
                   <GoogleIcon size={18} />
@@ -2858,7 +2757,7 @@ ${
                   <button
                     type="button"
                     className="btn-social btn-social-github"
-                    onClick={() => openSocialAuth("github")}
+                    onClick={() => handleSocialRedirect("github")}
                     disabled={authLoading}
                   >
                     <GitHubIcon size={18} />
@@ -2867,7 +2766,7 @@ ${
                   <button
                     type="button"
                     className="btn-social btn-social-linkedin"
-                    onClick={() => openSocialAuth("linkedin")}
+                    onClick={() => handleSocialRedirect("linkedin")}
                     disabled={authLoading}
                   >
                     <LinkedInIcon size={18} />
@@ -2928,7 +2827,7 @@ ${
                     <button
                       type="button"
                       className="auth-link-hint"
-                      onClick={() => showToast("Password hint: Use the 1-click Demo Account above or register a new one.")}
+                      onClick={() => showToast("Please enter your registered credentials or Continue with Google, GitHub, or LinkedIn.")}
                     >
                       Forgot password?
                     </button>
@@ -3015,104 +2914,6 @@ ${
                 Continue in Guest Mode →
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Interactive Social Connection Modal (Google, GitHub, LinkedIn) */}
-      {socialModal.isOpen && (
-        <div
-          className="modal-overlay social-overlay"
-          onClick={() => !socialModal.loading && setSocialModal({ ...socialModal, isOpen: false })}
-        >
-          <div className="modal-card social-connect-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="social-connect-header">
-              <div className="social-connect-brand">
-                <div className={`social-provider-icon-large icon-${socialModal.provider}`}>
-                  {socialModal.provider === "google" && <GoogleIcon size={26} />}
-                  {socialModal.provider === "github" && <GitHubIcon size={26} />}
-                  {socialModal.provider === "linkedin" && <LinkedInIcon size={26} />}
-                </div>
-                <div>
-                  <h4>Continue with {socialModal.provider.charAt(0).toUpperCase() + socialModal.provider.slice(1)}</h4>
-                  <p className="social-connect-sub">Instant Academic Account Linking</p>
-                </div>
-              </div>
-              {!socialModal.loading && (
-                <button
-                  type="button"
-                  className="btn-close"
-                  onClick={() => setSocialModal({ ...socialModal, isOpen: false })}
-                  title="Cancel"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-
-            {socialModal.loading ? (
-              <div className="social-connecting-state">
-                <div className="social-connect-spinner" />
-                <p className="social-status-text">{socialModal.statusText || "Verifying with provider..."}</p>
-                <span className="social-secure-lock">🔒 Verified 256-bit encrypted academic session</span>
-              </div>
-            ) : (
-              <div className="social-connect-body">
-                <div className="social-profile-preview">
-                  <div className="social-preview-avatar">
-                    {socialModal.name ? socialModal.name[0].toUpperCase() : "S"}
-                  </div>
-                  <div className="social-preview-info">
-                    <span className="social-preview-name">{socialModal.name}</span>
-                    <span className="social-preview-email">{socialModal.email}</span>
-                  </div>
-                  <span className="social-verified-tag">✓ Verified</span>
-                </div>
-
-                <div className="social-field-group">
-                  <label className="social-input-label">
-                    Email Address for {socialModal.provider.charAt(0).toUpperCase() + socialModal.provider.slice(1)}
-                  </label>
-                  <input
-                    type="email"
-                    className="social-custom-input"
-                    value={socialModal.email}
-                    onChange={(e) => setSocialModal({ ...socialModal, email: e.target.value })}
-                    placeholder={`your.name@${socialModal.provider === "google" ? "gmail.com" : socialModal.provider === "github" ? "github.com" : "linkedin.com"}`}
-                    required
-                  />
-                </div>
-
-                <div className="social-field-group">
-                  <label className="social-input-label">Student Name</label>
-                  <input
-                    type="text"
-                    className="social-custom-input"
-                    value={socialModal.name}
-                    onChange={(e) => setSocialModal({ ...socialModal, name: e.target.value })}
-                    placeholder="e.g. Alex Johnson"
-                    required
-                  />
-                </div>
-
-                <div className="social-action-buttons">
-                  <button
-                    type="button"
-                    className={`btn btn-primary btn-block btn-social-confirm btn-social-theme-${socialModal.provider}`}
-                    onClick={() => handleExecuteSocialLogin()}
-                  >
-                    🚀 Instant Continue as {socialModal.name ? socialModal.name.split(" ")[0] : "Student"}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-block"
-                    onClick={() => setSocialModal({ ...socialModal, isOpen: false })}
-                  >
-                    Back to Sign In
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       )}
